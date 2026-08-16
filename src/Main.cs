@@ -15,6 +15,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static scnEditor lastEditor;
         private static string status = "Open a level in the editor, then store each source chart as a track.";
         private static GenerationPlan lastPlan;
+        private static MasterPathPreview lastPathPreview;
 
         public static bool Load(UnityModManager.ModEntry entry)
         {
@@ -22,7 +23,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             entry.OnToggle = OnToggle;
             entry.OnGUI = OnGUI;
             entry.OnUpdate = OnUpdate;
-            logger.Log("ADOFAI Multi Tile Editor Prototype v0.4.0 loaded.");
+            logger.Log("ADOFAI Multi Tile Editor Prototype v0.5.0 loaded.");
             return true;
         }
 
@@ -41,7 +42,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (lastEditor != null && editor != lastEditor)
             {
                 store.Reset();
-                lastPlan = null;
+                InvalidatePlan();
                 status = "Editor instance changed; track queue was cleared.";
             }
             lastEditor = editor;
@@ -49,7 +50,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static void OnGUI(UnityModManager.ModEntry entry)
         {
-            GUILayout.Label("Multi Tile Editor prototype v0.4.0 - whole-region planner");
+            GUILayout.Label("Multi Tile Editor prototype v0.5.0 - master path verifier");
             scnEditor editor = ADOBase.editor;
             if (editor == null)
             {
@@ -57,7 +58,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 return;
             }
 
-            GUILayout.Label("v0.4 removes the obsolete per-step generator. It reconstructs every stored source track, analyzes stock entryBeat/angleLength/isCCW data, and merges a master timeline without modifying the chart.");
+            GUILayout.Label("v0.5 keeps whole-region planning and adds a read-only MasterPathBuilder. It synthesizes angleData from the merged anchors, temporarily reconstructs it through the stock editor, verifies angleLength/entryBeat, then restores the active chart unchanged.");
             GUILayout.Space(6f);
 
             GUILayout.BeginHorizontal();
@@ -69,7 +70,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 {
                     int index = store.StoreCurrent(editor, newTrackName);
                     newTrackName = "";
-                    lastPlan = null;
+                    InvalidatePlan();
                     status = "Stored current chart as track #" + (index + 1) + ".";
                 });
             }
@@ -78,7 +79,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 Try(delegate
                 {
                     store.SaveActive(editor);
-                    lastPlan = null;
+                    InvalidatePlan();
                     status = "Saved active source-track snapshot.";
                 });
             }
@@ -104,7 +105,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     Try(delegate
                     {
                         store.SwitchTo(editor, target);
-                        lastPlan = null;
+                        InvalidatePlan();
                         status = "Switched to " + store.Tracks[target].Name + ".";
                     });
                 }
@@ -116,7 +117,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     Try(delegate
                     {
                         store.Remove(editor, target);
-                        lastPlan = null;
+                        InvalidatePlan();
                         status = "Removed track.";
                     });
                     GUILayout.EndHorizontal();
@@ -134,7 +135,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (GUILayout.Button("swap", GUILayout.Width(50f)))
                 {
                     track.PivotIsA = !track.PivotIsA;
-                    lastPlan = null;
+                    InvalidatePlan();
                 }
                 GUILayout.EndHorizontal();
             }
@@ -148,19 +149,34 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 {
                     store.SaveActive(editor);
                     lastPlan = TrackAnalyzer.BuildPlan(editor, store.Tracks);
+                    lastPathPreview = null;
                     status = lastPlan.Diagnostic;
                 });
             }
+
             GUI.enabled = lastPlan != null;
-            if (GUILayout.Button("Clear plan", GUILayout.Width(90f))) lastPlan = null;
+            if (GUILayout.Button("Verify master path", GUILayout.Width(145f)))
+            {
+                Try(delegate
+                {
+                    lastPathPreview = MasterPathBuilder.BuildAndVerify(editor, lastPlan);
+                    status = lastPathPreview.Diagnostic;
+                });
+            }
+            if (GUILayout.Button("Clear plan", GUILayout.Width(90f)))
+            {
+                lastPlan = null;
+                lastPathPreview = null;
+            }
             GUI.enabled = true;
             GUILayout.EndHorizontal();
 
             if (lastPlan != null) DrawPlan(lastPlan);
+            if (lastPathPreview != null) DrawMasterPathPreview(lastPlan, lastPathPreview);
 
             GUILayout.Space(4f);
             GUILayout.Label(status);
-            GUILayout.Label("v0.4 is intentionally read-only after planning. MasterPathBuilder + OrbitEmitter come next, after the analyzed rhythms/timeline match the golden sample.");
+            GUILayout.Label("v0.5 is still read-only after planning/path verification. OrbitEmitter and final atomic commit are intentionally not implemented yet.");
         }
 
         private static void DrawPlan(GenerationPlan plan)
@@ -198,6 +214,30 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
             if (plan.Anchors.Count > anchorShown) GUILayout.Label("  ... " + (plan.Anchors.Count - anchorShown) + " more anchor(s)");
             GUILayout.EndScrollView();
+        }
+
+        private static void DrawMasterPathPreview(GenerationPlan plan, MasterPathPreview preview)
+        {
+            GUILayout.Space(6f);
+            GUILayout.Label("Master path verification: " + preview.AngleData.Count + " angleData value(s), "
+                + preview.RuntimeFloorCount + " runtime anchor floor(s), max angle error="
+                + preview.MaxAngleErrorDegrees.ToString("0.######") + "°, max beat error=" + preview.MaxBeatError.ToString("0.0e+0"));
+
+            int shown = Math.Min(preview.AngleData.Count, 32);
+            for (int i = 0; i < shown; i++)
+            {
+                double travel = (plan.Anchors[i + 1].Beat - plan.Anchors[i].Beat) * 180.0;
+                GUILayout.Label("  A" + i + " heading=" + preview.AngleData[i].ToString("0.######")
+                    + "°    travel=" + travel.ToString("0.######") + "°    M" + i + " -> M" + (i + 1));
+            }
+            if (preview.AngleData.Count > shown)
+                GUILayout.Label("  ... " + (preview.AngleData.Count - shown) + " more angleData value(s)");
+        }
+
+        private static void InvalidatePlan()
+        {
+            lastPlan = null;
+            lastPathPreview = null;
         }
 
         private static void Try(Action action)

@@ -7,6 +7,7 @@ Current direction:
 - Keep any number of ordinary source-chart snapshots while using the stock ADOFAI editor.
 - Analyze each two-planet source track with stock reconstructed floor data.
 - Merge the independent source rhythms into one master timeline/path.
+- Synthesize and verify a stock-valid master `angleData` path from that merged timeline.
 - Emit PACL2 Orbit Decoration actions for every group on that master timeline.
 - Keep playback/runtime behavior in PACL2 instead of implementing another renderer.
 
@@ -14,15 +15,17 @@ See [SPEC.md](SPEC.md) for the frozen v1 behavior and the observations taken fro
 
 ## Current status
 
-Prototype v0.4.0 replaces the obsolete per-step Orbit generator with the first half of the v1 pipeline:
+Prototype v0.5.0 implements the first three conversion stages while remaining read-only:
 
 1. `TrackAnalyzer` temporarily reconstructs every stored snapshot through the stock editor and reads runtime `entryBeat`, `angleLength`, `isCCW`, and speed state.
 2. `TimelineMerger` validates common start/end timing and common speed maps, then merges all segment boundaries with a `1e-6` beat epsilon.
-3. The UMM GUI shows the resulting per-track segments and master anchors for comparison against the golden sample.
+3. `MasterPathBuilder` converts adjacent master-anchor gaps into ordinary two-planet `angleData`, temporarily reconstructs that candidate through the stock editor, and verifies stock `angleLength` plus `entryBeat`/cumulative timing before restoring the active chart unchanged.
 
-v0.4.0 is deliberately read-only after planning. It does **not** synthesize the master path or emit Orbit Decoration actions yet. Those are the next two stages (`MasterPathBuilder` and `OrbitEmitter`) after the analyzer output is verified.
+The v0.5 path verifier deliberately removes actions only from its temporary candidate so source-track events cannot interfere with geometry validation. It does not modify stored tracks or the active chart.
 
-The planner rejects unsupported v1 cases such as source `Pause`, `MultiPlanet`, `Hold`, `FreeRoam`, conflicting tag pairs, timing-map mismatches, and reconstructed angle/timing inconsistencies instead of silently guessing.
+`OrbitEmitter`, event-floor remapping, decoration validation, and the final atomic commit are intentionally still absent. They come only after the master path is verified against the golden sample.
+
+Current v0.5 path synthesis supports a maximum of `360°` (2 beat-units) between adjacent master anchors. Longer gaps will be rejected until helper/midspin floor insertion is implemented.
 
 ## Build
 
