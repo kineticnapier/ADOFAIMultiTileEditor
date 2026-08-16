@@ -10,7 +10,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
     {
         private const double AngleConsistencyAbsoluteDegrees = 0.02;
         private const double AngleConsistencyRelative = 1.0e-4;
-        private const double SpeedEpsilon = 1.0e-6;
+        private const double TimeConsistencyAbsoluteSeconds = 0.002;
+        private const double TimeConsistencyRelative = 2.0e-4;
+        private const double MinBpm = 1.0e-5;
 
         internal static GenerationPlan BuildPlan(scnEditor editor, IList<TrackSlot> tracks)
         {
@@ -42,8 +44,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     editor.SelectFloor(editor.floors[selectedFloor], true);
             }
 
-            ValidateCommonSpeedMap(analyzed);
-            return TimelineMerger.Merge(analyzed);
+            double masterBpm = NormalizeToMasterTimeline(analyzed);
+            GenerationPlan plan = TimelineMerger.Merge(analyzed);
+            plan.MasterBpm = masterBpm;
+            plan.StartSeconds = analyzed[0].StartSeconds;
+            plan.EndSeconds = analyzed[0].EndSeconds;
+            plan.Diagnostic = plan.Diagnostic.TrimEnd('.')
+                + "; constant master BPM " + masterBpm.ToString("0.######", CultureInfo.InvariantCulture)
+                + " (source SetSpeed maps baked into real-time segment durations).";
+            return plan;
         }
 
         private static AnalyzedTrack AnalyzeCurrentRuntime(scnEditor editor, TrackSlot slot, int trackIndex)
@@ -62,6 +71,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (floors.Count < 2)
                 throw new InvalidOperationException("Track '" + slot.Name + "' has fewer than two landable floors after midspin filtering.");
 
+            double baseBpm = Convert.ToDouble(editor.levelData.bpm, CultureInfo.InvariantCulture);
+            if (!(baseBpm > MinBpm) || double.IsNaN(baseBpm) || double.IsInfinity(baseBpm))
+                throw new InvalidOperationException("Track '" + slot.Name + "' has an invalid base BPM.");
+
             var result = new AnalyzedTrack
             {
                 TrackIndex = trackIndex,
@@ -69,21 +82,17 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 PlanetATag = slot.PlanetATag.Trim(),
                 PlanetBTag = slot.PlanetBTag.Trim(),
                 InitialPivotIsA = slot.PivotIsA,
+                BaseBpm = baseBpm,
                 StartBeat = 0.0,
-                EndBeat = 0.0
+                EndBeat = 0.0,
+                StartSeconds = 0.0,
+                EndSeconds = 0.0
             };
 
             ValidateUnsupportedFloorState(floors, slot.Name);
 
-            // scrFloor.angleLength belongs to the movement LEAVING that floor.
-            // Therefore the segment floor[i] -> floor[i+1] must read angleLength/isCCW
-            // from floor[i], not floor[i+1]. This matches runtime entryBeat deltas and
-            // the hand-built golden sample (180°, then 135°, ...).
-            var floorBeats = new List<double>();
-            floorBeats.Add(0.0);
-
             bool pivotIsA = slot.PivotIsA;
-            double cursorBeat = 0.0;
+            double cursorSeconds = 0.0;
             for (int i = 0; i + 1 < floors.Count; i++)
             {
                 object startFloor = floors[i];
@@ -92,8 +101,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 AngleCandidate chosen = ReadAngleCandidate(startFloor, i);
                 if (!chosen.Valid || chosen.MagnitudeDegrees <= TimelineMerger.BeatEpsilon * 180.0)
                 {
-                    // Compatibility fallback only. Normal stock reconstruction should
-                    // provide the outgoing angle on startFloor.
                     AngleCandidate fallback = ReadAngleCandidate(endFloor, i + 1);
                     if (fallback.Valid && fallback.MagnitudeDegrees > TimelineMerger.BeatEpsilon * 180.0)
                         chosen = fallback;
@@ -101,21 +108,53 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (!chosen.Valid || chosen.MagnitudeDegrees <= TimelineMerger.BeatEpsilon * 180.0)
                     throw new InvalidOperationException("Track '" + slot.Name + "' has no positive readable angleLength near runtime floor " + ReadFloorId(startFloor, i) + ".");
 
-                double duration = chosen.MagnitudeDegrees / 180.0;
-                double startBeat = cursorBeat;
-                double endBeat = startBeat + duration;
+                double sourceDurationBeats = chosen.MagnitudeDegrees / 180.0;
+                double speed = ReadDouble(startFloor, "speed", 1.0);
+                double effectiveBpm = baseBpm * speed;
+                if (!(effectiveBpm > MinBpm) || double.IsNaN(effectiveBpm) || double.IsInfinity(effectiveBpm))
+                    throw new InvalidOperationException("Track '" + slot.Name + "' has an invalid effective BPM near source floor " + chosen.FloorId + ".");
 
-                // Runtime entryBeat is used only as a consistency check. The editor's
-                // synthetic terminal floor may have an unset/non-monotonic entryBeat,
-                // so non-positive intervals are ignored here.
-                double runtimeStart;
-                double runtimeEnd;
-                string source = chosen.Source;
-                if (TryReadDouble(startFloor, "entryBeat", out runtimeStart)
-                    && TryReadDouble(endFloor, "entryBeat", out runtimeEnd)
-                    && runtimeEnd - runtimeStart > TimelineMerger.BeatEpsilon)
+                double durationSeconds = sourceDurationBeats * 60.0 / effectiveBpm;
+                string source = chosen.Source + " + BPM*speed timing";
+
+                // entryTime is the stock runtime's real-time truth. Use it when it is
+                // available and sane; if it differs materially from the simple BPM*speed
+                // calculation, prefer the reconstructed runtime value rather than guessing.
+                double runtimeStartTime;
+                double runtimeEndTime;
+                if (TryReadDouble(startFloor, "entryTime", out runtimeStartTime)
+                    && TryReadDouble(endFloor, "entryTime", out runtimeEndTime)
+                    && runtimeEndTime - runtimeStartTime > 1.0e-9)
                 {
-                    double runtimeMagnitude = (runtimeEnd - runtimeStart) * 180.0;
+                    double runtimeSeconds = runtimeEndTime - runtimeStartTime;
+                    double tolerance = Math.Max(TimeConsistencyAbsoluteSeconds, durationSeconds * TimeConsistencyRelative);
+                    if (Math.Abs(runtimeSeconds - durationSeconds) > tolerance)
+                    {
+                        durationSeconds = runtimeSeconds;
+                        effectiveBpm = sourceDurationBeats * 60.0 / durationSeconds;
+                        source += " + entryTime override";
+                    }
+                    else
+                    {
+                        // Keep the exact BPM/speed-derived duration to avoid accumulating
+                        // float noise across long charts, but record that stock timing agreed.
+                        source += " + entryTime check";
+                    }
+                }
+                else
+                {
+                    source += " + terminal-safe fallback";
+                }
+
+                // entryBeat is independent of SetSpeed and remains useful as an angle
+                // consistency check. Synthetic terminal floors may have it unset.
+                double runtimeStartBeat;
+                double runtimeEndBeat;
+                if (TryReadDouble(startFloor, "entryBeat", out runtimeStartBeat)
+                    && TryReadDouble(endFloor, "entryBeat", out runtimeEndBeat)
+                    && runtimeEndBeat - runtimeStartBeat > TimelineMerger.BeatEpsilon)
+                {
+                    double runtimeMagnitude = (runtimeEndBeat - runtimeStartBeat) * 180.0;
                     double tolerance = Math.Max(AngleConsistencyAbsoluteDegrees, chosen.MagnitudeDegrees * AngleConsistencyRelative);
                     if (Math.Abs(runtimeMagnitude - chosen.MagnitudeDegrees) > tolerance)
                     {
@@ -123,40 +162,75 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                             "Track '" + slot.Name + "' reconstructed timing/angle mismatch near source floor " + chosen.FloorId
                             + ": entryBeat interval implies " + runtimeMagnitude.ToString("0.###", CultureInfo.InvariantCulture)
                             + "°, but angleLength gives " + chosen.MagnitudeDegrees.ToString("0.###", CultureInfo.InvariantCulture) + "°."
-                            + " v0.4 intentionally rejects unsupported timing cases instead of guessing.");
+                            + " Unsupported timing geometry is rejected instead of guessed.");
                     }
-                    source += " + entryBeat check";
-                }
-                else
-                {
-                    source += " + cumulative beat (terminal-safe)";
                 }
 
+                double startSeconds = cursorSeconds;
+                double endSeconds = startSeconds + durationSeconds;
                 string moving = pivotIsA ? result.PlanetBTag : result.PlanetATag;
                 string center = pivotIsA ? result.PlanetATag : result.PlanetBTag;
                 double amount = chosen.IsCCW ? chosen.MagnitudeDegrees : -chosen.MagnitudeDegrees;
+
                 result.Segments.Add(new TrackSegment
                 {
                     TrackIndex = trackIndex,
                     TrackName = result.Name,
                     SourceFloor = chosen.FloorId,
-                    StartBeat = startBeat,
-                    EndBeat = endBeat,
-                    DurationBeats = duration,
+                    StartSeconds = startSeconds,
+                    EndSeconds = endSeconds,
+                    DurationSeconds = durationSeconds,
+                    SourceDurationBeats = sourceDurationBeats,
+                    EffectiveBpm = effectiveBpm,
                     AmountDegrees = amount,
                     AngleSource = source,
                     MovingTag = moving,
                     CenterTag = center
                 });
 
-                cursorBeat = endBeat;
-                floorBeats.Add(cursorBeat);
+                cursorSeconds = endSeconds;
                 pivotIsA = !pivotIsA;
             }
 
-            result.EndBeat = cursorBeat;
-            CaptureSpeedMap(floors, floorBeats, result);
+            result.EndSeconds = cursorSeconds;
             return result;
+        }
+
+        private static double NormalizeToMasterTimeline(IList<AnalyzedTrack> tracks)
+        {
+            if (tracks == null || tracks.Count == 0)
+                throw new InvalidOperationException("No analyzed tracks were supplied for timing normalization.");
+
+            double masterBpm = double.PositiveInfinity;
+            for (int t = 0; t < tracks.Count; t++)
+            {
+                AnalyzedTrack track = tracks[t];
+                for (int s = 0; s < track.Segments.Count; s++)
+                {
+                    double bpm = track.Segments[s].EffectiveBpm;
+                    if (bpm > MinBpm && !double.IsNaN(bpm) && !double.IsInfinity(bpm) && bpm < masterBpm)
+                        masterBpm = bpm;
+                }
+            }
+            if (double.IsPositiveInfinity(masterBpm))
+                throw new InvalidOperationException("Could not choose a valid master BPM from the source tracks.");
+
+            for (int t = 0; t < tracks.Count; t++)
+            {
+                AnalyzedTrack track = tracks[t];
+                track.StartBeat = track.StartSeconds * masterBpm / 60.0;
+                track.EndBeat = track.EndSeconds * masterBpm / 60.0;
+
+                for (int s = 0; s < track.Segments.Count; s++)
+                {
+                    TrackSegment segment = track.Segments[s];
+                    segment.StartBeat = segment.StartSeconds * masterBpm / 60.0;
+                    segment.EndBeat = segment.EndSeconds * masterBpm / 60.0;
+                    segment.DurationBeats = segment.DurationSeconds * masterBpm / 60.0;
+                }
+            }
+
+            return masterBpm;
         }
 
         private static void ValidateTags(IList<TrackSlot> tracks)
@@ -189,42 +263,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     throw new InvalidOperationException("Track '" + trackName + "' uses FreeRoam at/near floor " + floorId + "; v1 does not support it.");
                 if (ReadInt(floor, "holdLength", -1) >= 0)
                     throw new InvalidOperationException("Track '" + trackName + "' uses Hold at/near floor " + floorId + "; v1 does not support it.");
-            }
-        }
-
-        private static void CaptureSpeedMap(IList<object> floors, IList<double> floorBeats, AnalyzedTrack track)
-        {
-            double lastSpeed = double.NaN;
-            int count = Math.Min(floors.Count, floorBeats.Count);
-            for (int i = 0; i < count; i++)
-            {
-                object floor = floors[i];
-                double speed = ReadDouble(floor, "speed", 1.0);
-                if (double.IsNaN(lastSpeed) || Math.Abs(speed - lastSpeed) > SpeedEpsilon)
-                {
-                    track.SpeedMap.Add(new SpeedPoint { Beat = floorBeats[i], Speed = speed });
-                    lastSpeed = speed;
-                }
-            }
-        }
-
-        private static void ValidateCommonSpeedMap(IList<AnalyzedTrack> tracks)
-        {
-            if (tracks.Count < 2) return;
-            AnalyzedTrack expected = tracks[0];
-            for (int t = 1; t < tracks.Count; t++)
-            {
-                AnalyzedTrack actual = tracks[t];
-                if (actual.SpeedMap.Count != expected.SpeedMap.Count)
-                    throw new InvalidOperationException("Timing map differs between '" + expected.Name + "' and '" + actual.Name + "' (different speed-change count).");
-                for (int i = 0; i < expected.SpeedMap.Count; i++)
-                {
-                    if (!TimelineMerger.NearlyEqual(expected.SpeedMap[i].Beat, actual.SpeedMap[i].Beat)
-                        || Math.Abs(expected.SpeedMap[i].Speed - actual.SpeedMap[i].Speed) > SpeedEpsilon)
-                    {
-                        throw new InvalidOperationException("Timing map differs between '" + expected.Name + "' and '" + actual.Name + "' near speed change #" + (i + 1) + ".");
-                    }
-                }
             }
         }
 

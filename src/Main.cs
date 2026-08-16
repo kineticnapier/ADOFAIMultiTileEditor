@@ -58,7 +58,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 return;
             }
 
-            GUILayout.Label("Pipeline: source TrackAnalyzer -> timeline union -> verified master path -> automatic PACL2 planets/orbits -> automatic source Floor decorations -> commit.");
+            GUILayout.Label("Pipeline: source TrackAnalyzer -> real-time timeline union -> verified constant-BPM master path -> automatic PACL2 planets/orbits -> source Floor decorations -> commit.");
             GUILayout.Space(6f);
 
             GUILayout.BeginHorizontal();
@@ -186,7 +186,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 Try(delegate
                 {
                     int baseTrackIndex = store.ActiveIndex;
-                    OrbitCommitResult orbitResult = PACL2AutoGenerator.GenerateAndCommit(editor, lastPlan, lastPathPreview, store.Tracks, baseTrackIndex);
+                    OrbitCommitResult orbitResult = MasterOutputGenerator.GenerateAndCommit(editor, lastPlan, lastPathPreview, store.Tracks, baseTrackIndex);
                     TileDecorationResult tileResult = FixedTileDecorationGenerator.GenerateAndCommit(editor, store.Tracks);
                     store.DetachActive();
                     status = orbitResult.Diagnostic + " " + tileResult.Diagnostic + " Editor is now detached from source snapshots.";
@@ -201,28 +201,31 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             GUI.enabled = true;
             GUILayout.EndHorizontal();
 
-            GUILayout.Label("v0.8 creates missing A/B planets, OrbitDecoration actions, and EQOL-compatible source Floor preview decorations automatically. Existing complete A/B pairs and manually-authored EQOL previews are preserved.");
+            GUILayout.Label("Source tracks may now use different SetSpeed maps: analysis merges reconstructed real time and generates one constant-BPM master output. Pause/Hold/FreeRoam/MultiPlanet remain unsupported.");
 
             if (lastPlan != null) DrawPlan(lastPlan);
             if (lastPathPreview != null) DrawMasterPathPreview(lastPlan, lastPathPreview);
 
             GUILayout.Space(4f);
             GUILayout.Label(status);
-            GUILayout.Label("Floor previews now separate geometric tile shape from gameplay/Twirl rhythm, normalize runtime positions by tileSize, and share the same origin as auto-created planets.");
+            GUILayout.Label("Floor previews separate geometric tile shape from gameplay/Twirl rhythm, normalize runtime positions by tileSize, and share the same origin/initial phase as auto-created planets.");
         }
 
         private static void DrawPlan(GenerationPlan plan)
         {
             GUILayout.Space(6f);
             GUILayout.Label("Plan summary: " + plan.Tracks.Count + " tracks, " + plan.Anchors.Count + " anchors, "
-                + (plan.EndBeat - plan.StartBeat).ToString("0.######") + " beats. Timeline epsilon=" + TimelineMerger.BeatEpsilon.ToString("0.0e+0"));
+                + (plan.EndBeat - plan.StartBeat).ToString("0.######") + " master beats / "
+                + (plan.EndSeconds - plan.StartSeconds).ToString("0.######") + " sec @ "
+                + plan.MasterBpm.ToString("0.######") + " BPM. Timeline epsilon=" + TimelineMerger.BeatEpsilon.ToString("0.0e+0"));
 
             planScroll = GUILayout.BeginScrollView(planScroll, GUILayout.Height(300f));
             for (int t = 0; t < plan.Tracks.Count; t++)
             {
                 AnalyzedTrack track = plan.Tracks[t];
                 GUILayout.Label(track.Name + ": " + track.Segments.Count + " segments, "
-                    + track.StartBeat.ToString("0.######") + " -> " + track.EndBeat.ToString("0.######") + " beats");
+                    + track.StartBeat.ToString("0.######") + " -> " + track.EndBeat.ToString("0.######") + " master beats; base BPM="
+                    + track.BaseBpm.ToString("0.######"));
                 int shown = Math.Min(track.Segments.Count, 16);
                 for (int s = 0; s < shown; s++)
                 {
@@ -230,7 +233,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     GUILayout.Label("  #" + s + " F" + seg.SourceFloor + "  "
                         + (seg.StartBeat - plan.StartBeat).ToString("0.######") + " -> "
                         + (seg.EndBeat - plan.StartBeat).ToString("0.######") + "  dur="
-                        + seg.DurationBeats.ToString("0.######") + "  " + seg.MovingTag + " around " + seg.CenterTag
+                        + seg.DurationBeats.ToString("0.######") + " master beat / "
+                        + seg.DurationSeconds.ToString("0.######") + " sec  " + seg.MovingTag + " around " + seg.CenterTag
                         + "  amount=" + seg.AmountDegrees.ToString("0.###") + "°  @M" + seg.MasterAnchorIndex);
                 }
                 if (track.Segments.Count > shown) GUILayout.Label("  ... " + (track.Segments.Count - shown) + " more segment(s)");
