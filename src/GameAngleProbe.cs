@@ -45,10 +45,26 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             return result;
         }
 
-        internal static int TryGetCurrentFloorIndex(scnEditor editor)
+        internal static int TryGetSelectedFloorIndex(scnEditor editor)
         {
             if (editor == null || editor.floors == null || editor.floors.Count == 0) return -1;
 
+            // The stock editor keeps its current tile selection in selectedFloors.
+            // For a multi-selection, generate on the first selected floor.
+            try
+            {
+                if (editor.selectedFloors != null && editor.selectedFloors.Count > 0)
+                {
+                    object selected = editor.selectedFloors[0];
+                    for (int i = 0; i < editor.floors.Count; i++)
+                        if (ReferenceEquals(editor.floors[i], selected)) return i;
+                }
+            }
+            catch
+            {
+            }
+
+            // Compatibility fallback for older editor builds/modded editor states.
             object floor = ReadMember(editor, "currFloor") ?? ReadMember(editor, "selectedFirstFloor");
             if (floor != null)
             {
@@ -57,6 +73,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
 
             return -1;
+        }
+
+        internal static int TryGetCurrentFloorIndex(scnEditor editor)
+        {
+            return TryGetSelectedFloorIndex(editor);
         }
 
         private static AngleSample ReadFloorAngle(object floor)

@@ -11,7 +11,7 @@ Current prototype goals:
 
 ## Current status
 
-Prototype v0.3.0. Track storage/switching works; multi-tile Orbit Decoration generation is experimental and currently being debugged.
+Prototype v0.3.1. Track storage/switching works. Multi-tile generation now uses the stock editor selection (`scnEditor.selectedFloors`) and targets the first selected floor when multiple floors are selected. Orbit Decoration generation remains experimental.
 
 ## Build
 

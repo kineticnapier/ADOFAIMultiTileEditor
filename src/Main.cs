@@ -23,7 +23,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             entry.OnToggle = OnToggle;
             entry.OnGUI = OnGUI;
             entry.OnUpdate = OnUpdate;
-            logger.Log("ADOFAI Multi Tile Editor Prototype v0.3.0 loaded.");
+            logger.Log("ADOFAI Multi Tile Editor Prototype v0.3.1 loaded.");
             return true;
         }
 
@@ -49,7 +49,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static void OnGUI(UnityModManager.ModEntry entry)
         {
-            GUILayout.Label("Multi Tile Editor prototype v0.3.0 - angle fix + Orbit generator");
+            GUILayout.Label("Multi Tile Editor prototype v0.3.1 - selected-floor fix");
             scnEditor editor = ADOBase.editor;
             if (editor == null)
             {
@@ -57,7 +57,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 return;
             }
 
-            GUILayout.Label("v0.3 uses the stock floor angle, converts radians to degrees, and clones an existing PACL2 Orbit Decoration as a template.");
+            GUILayout.Label("v0.3.1 reads the stock selectedFloors list for generation targets, keeps the rad->deg angle fix, and clones an existing PACL2 Orbit Decoration as a template.");
             GUILayout.Space(6f);
 
             GUILayout.BeginHorizontal();
@@ -164,6 +164,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             GUILayout.EndScrollView();
 
             GUILayout.Space(6f);
+            int selectedTargetFloor = GameAngleProbe.TryGetSelectedFloorIndex(editor);
+            GUILayout.Label("Selected target floor: " + (selectedTargetFloor >= 0 ? ("F" + selectedTargetFloor) : "none"));
             GUILayout.Label("Orbit template: " + OrbitTemplateGenerator.ProbeTemplate(editor));
             GUILayout.BeginHorizontal();
             GUILayout.Label("Duration", GUILayout.Width(58f));
@@ -182,7 +184,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     float duration;
                     if (!float.TryParse(durationText, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out duration) || duration <= 0f)
                         throw new InvalidOperationException("Duration must be a positive number (use '.' as decimal separator).");
-                    int targetFloor = GameAngleProbe.TryGetCurrentFloorIndex(editor);
+                    int targetFloor = GameAngleProbe.TryGetSelectedFloorIndex(editor);
                     if (targetFloor < 0) throw new InvalidOperationException("Select a target floor in the active editor first.");
 
                     OrbitGenerationResult result = OrbitTemplateGenerator.Generate(editor, store.Tracks, targetFloor, duration, easeText, lockRotation);
@@ -198,7 +200,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             GUILayout.Space(4f);
             GUILayout.Label(status);
-            GUILayout.Label("Prototype safety rule: generation is all-or-nothing, but v0.3 still expects one dummy Orbit Decoration in the active chart as a template.");
+            GUILayout.Label("Prototype safety rule: generation is all-or-nothing, and v0.3.1 still expects one dummy Orbit Decoration in the active chart as a template.");
         }
 
         private static void Try(Action action)
