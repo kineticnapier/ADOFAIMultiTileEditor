@@ -106,7 +106,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             try
             {
-                PropertyInfo property = type.GetProperty(name, flags);
+                System.Reflection.PropertyInfo property = type.GetProperty(name, flags);
                 if (property != null && property.GetIndexParameters().Length == 0)
                 {
                     MethodInfo setter = property.GetSetMethod(true);
@@ -162,7 +162,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             try
             {
-                PropertyInfo property = type.GetProperty(name, flags);
+                System.Reflection.PropertyInfo property = type.GetProperty(name, flags);
                 if (property != null && property.GetIndexParameters().Length == 0)
                     return property.GetValue(target, null);
             }
