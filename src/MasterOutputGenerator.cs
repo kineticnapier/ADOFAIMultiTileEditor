@@ -160,7 +160,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             for (int i = 0; i < events.Count; i++)
             {
                 LevelEvent ev = events[i] as LevelEvent;
-                if (ev == null || !IsSetSpeed(ev) || ev.floor != 0) continue;
+                if (ev == null || !IsSetSpeed(ev)) continue;
 
                 string speedType = Convert.ToString(SafeGetData(ev, "speedType"), CultureInfo.InvariantCulture) ?? "";
                 double bpm;
