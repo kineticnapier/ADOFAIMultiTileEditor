@@ -187,7 +187,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 {
                     int baseTrackIndex = store.ActiveIndex;
                     OrbitCommitResult orbitResult = PACL2AutoGenerator.GenerateAndCommit(editor, lastPlan, lastPathPreview, store.Tracks, baseTrackIndex);
-                    TileDecorationResult tileResult = TileDecorationGenerator.GenerateAndCommit(editor, store.Tracks);
+                    TileDecorationResult tileResult = FixedTileDecorationGenerator.GenerateAndCommit(editor, store.Tracks);
                     store.DetachActive();
                     status = orbitResult.Diagnostic + " " + tileResult.Diagnostic + " Editor is now detached from source snapshots.";
                 });
@@ -208,7 +208,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             GUILayout.Space(4f);
             GUILayout.Label(status);
-            GUILayout.Label("Generated Floor previews use source runtime positions/angles, omit the initial and synthetic terminal floor like the golden sample, and carry an ownership tag so regeneration replaces only MTE-generated previews.");
+            GUILayout.Label("Floor previews now separate geometric tile shape from gameplay/Twirl rhythm, normalize runtime positions by tileSize, and share the same origin as auto-created planets.");
         }
 
         private static void DrawPlan(GenerationPlan plan)
