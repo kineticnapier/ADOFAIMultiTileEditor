@@ -75,11 +75,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             ValidateUnsupportedFloorState(floors, slot.Name);
 
-            // Runtime entryBeat is useful as a consistency check, but the editor's synthetic
-            // terminal floor can have an unset/non-monotonic entryBeat. Build the source
-            // region timeline cumulatively from the stock-computed angleLength instead.
-            // Under the v1 restrictions (no Pause/MultiPlanet/FreeRoam/Hold), one 180°
-            // travel angle is one beat, independent of BPM.
+            // scrFloor.angleLength belongs to the movement LEAVING that floor.
+            // Therefore the segment floor[i] -> floor[i+1] must read angleLength/isCCW
+            // from floor[i], not floor[i+1]. This matches runtime entryBeat deltas and
+            // the hand-built golden sample (180°, then 135°, ...).
             var floorBeats = new List<double>();
             floorBeats.Add(0.0);
 
@@ -90,23 +89,25 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 object startFloor = floors[i];
                 object endFloor = floors[i + 1];
 
-                AngleCandidate chosen = ReadAngleCandidate(endFloor, i + 1);
+                AngleCandidate chosen = ReadAngleCandidate(startFloor, i);
                 if (!chosen.Valid || chosen.MagnitudeDegrees <= TimelineMerger.BeatEpsilon * 180.0)
                 {
-                    AngleCandidate fallback = ReadAngleCandidate(startFloor, i);
+                    // Compatibility fallback only. Normal stock reconstruction should
+                    // provide the outgoing angle on startFloor.
+                    AngleCandidate fallback = ReadAngleCandidate(endFloor, i + 1);
                     if (fallback.Valid && fallback.MagnitudeDegrees > TimelineMerger.BeatEpsilon * 180.0)
                         chosen = fallback;
                 }
                 if (!chosen.Valid || chosen.MagnitudeDegrees <= TimelineMerger.BeatEpsilon * 180.0)
-                    throw new InvalidOperationException("Track '" + slot.Name + "' has no positive readable angleLength near runtime floor " + ReadFloorId(endFloor, i + 1) + ".");
+                    throw new InvalidOperationException("Track '" + slot.Name + "' has no positive readable angleLength near runtime floor " + ReadFloorId(startFloor, i) + ".");
 
                 double duration = chosen.MagnitudeDegrees / 180.0;
                 double startBeat = cursorBeat;
                 double endBeat = startBeat + duration;
 
-                // When both runtime entryBeat values are monotonic, verify that they agree
-                // with angleLength. If the end value is the editor's terminal sentinel
-                // (commonly zero/unset), simply skip this check instead of rejecting it.
+                // Runtime entryBeat is used only as a consistency check. The editor's
+                // synthetic terminal floor may have an unset/non-monotonic entryBeat,
+                // so non-positive intervals are ignored here.
                 double runtimeStart;
                 double runtimeEnd;
                 string source = chosen.Source;
