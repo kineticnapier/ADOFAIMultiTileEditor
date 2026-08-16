@@ -2,7 +2,7 @@
 
 Status: **Draft / implementation contract**
 
-This document defines the first useful multi-tile workflow. It is based on the hand-built `multitest.adofai` golden sample and on behavior verified through the stock ADOFAI editor.
+This document defines the first useful multi-tile workflow. It is based on the hand-built `multitest.adofai` golden sample and behavior verified through the stock ADOFAI editor.
 
 The core architectural rule is:
 
@@ -15,13 +15,14 @@ Given any number of independently edited two-planet source tracks, generate a si
 The mod should automate:
 
 - source-track storage and switching,
-- extracting each track's actual reconstructed movement/timing,
+- extracting each track's reconstructed movement/timing,
 - merging all hit times into one master timeline,
 - synthesizing a stock-valid master path,
 - alternating each group's moving/pivot planet,
 - creating missing initial PACL2 planet decorations,
 - calculating and placing every PACL2 `OrbitDecoration`,
-- committing only after the complete candidate validates.
+- recreating each source chart as optional visual Floor `AddObject` previews,
+- committing only validated playable data.
 
 The stock ADOFAI editor remains the chart editor. PACL2 remains responsible for runtime Orbit playback.
 
@@ -38,8 +39,7 @@ The following remain out of scope:
 - DAG/shared-node editing,
 - arbitrary per-track gameplay/decor event merging,
 - track-specific `SetSpeed`, `Pause`, or incompatible timing maps,
-- reproducing the exact visual geometry or exact floor numbers of the golden sample,
-- automatically recreating the EQOL helper-floor visualization.
+- reproducing the exact visual geometry or exact floor numbers of the golden sample.
 
 ## 3. Terminology
 
@@ -76,6 +76,10 @@ The ordered union of segment start/boundary times from every source track.
 
 The ordinary ADOFAI `angleData` path synthesized so its floors occur at the master timeline instants.
 
+### Source-tile preview
+
+A non-gameplay PACL2 `AddObject` with `objectType = Floor` used to display the shape/rhythm of one stored source chart next to the generated multi-tile result.
+
 ### Golden sample
 
 The hand-built `multitest.adofai` reference chart.
@@ -95,6 +99,8 @@ The old per-step `Generate Multi Tile Step` model is superseded. Generation is a
 
 Initial planet decorations do not need to be manually created when both are absent: the generator creates them automatically. Existing complete A/B pairs are preserved.
 
+Source-tile previews are generated automatically unless a compatible manual/EQOL preview for that track already exists.
+
 ## 5. Source-track constraints
 
 All stored source tracks MUST:
@@ -105,7 +111,7 @@ All stored source tracks MUST:
 - finish at the same musical time within timeline epsilon,
 - represent exactly one two-planet group each.
 
-Tracks MAY have different floor counts, rhythms, and travel angles.
+Tracks MAY have different floor counts, rhythms, travel angles, and visual path shapes.
 
 Track count is arbitrary. The implementation MUST NOT assume exactly two groups.
 
@@ -125,9 +131,9 @@ For each source segment the analyzer obtains:
 - PACL2 duration,
 - source floor for diagnostics.
 
-`scrFloor.angleLength` is radians in the current build. It belongs to the movement **leaving** that floor.
+`scrFloor.angleLength` is radians in the current build and belongs to the movement **leaving** that floor.
 
-The analyzer currently uses reconstructed `angleLength`, `entryBeat`, `isCCW`, and speed state. It MUST NOT infer the real movement from raw `angleData` subtraction alone.
+The analyzer currently uses reconstructed `angleLength`, `entryBeat`, `isCCW`, and speed state. It MUST NOT infer real movement from raw `angleData` subtraction alone.
 
 ### Duration
 
@@ -151,8 +157,6 @@ Game reconstruction remains the source of truth.
 ## 7. Timeline merge
 
 The generator merges source segment boundaries by musical time, never by source floor number.
-
-Conceptually:
 
 ```text
 Track A: 0 ---- 1 ---- 1.75 ---- 2.5 ---- ...
@@ -237,7 +241,7 @@ v1 fixes:
 
 Generated PACL2 data MUST retain the types declared by ADOFAI/PACL2 event metadata.
 
-In particular, generation MUST NOT leave values such as `duration`/`amount` as `Double` or `ease` as raw `String` when PACL2 expects `Single`/enum values. The generated chart must work immediately without requiring a save/reload Decode cycle.
+Generation MUST NOT leave values such as `duration`/`amount` as `Double` or `ease` as raw `String` when PACL2 expects `Single`/enum values. The generated chart must work immediately without requiring a save/reload Decode cycle.
 
 ### Template handling
 
@@ -271,13 +275,11 @@ Within each group:
 - Planet B defaults to `DefaultBlue`,
 - the objects are Tile-relative and use ordinary PACL2 Planet defaults for non-owned visual fields.
 
-The user can restyle/reposition complete pairs later through normal PACL2 editing; regeneration preserves existing complete pairs.
+The user can restyle/reposition complete pairs later; regeneration preserves existing complete pairs.
 
-This is still data generation, not a runtime renderer.
+## 12. Source-tile preview generation / EQOL independence
 
-## 12. EQOL independence
-
-The golden sample contains EQOL-generated Floor `AddObject` helpers with tags such as:
+The golden sample contains Floor `AddObject` helpers with tags such as:
 
 ```text
 T0
@@ -288,13 +290,28 @@ qolMultiTile_T0
 qolMultiTileRhythm_...
 ```
 
-They are reference/visualization data only.
+v0.8 generates equivalent preview objects without requiring EQOL.
 
-Multi Tile Editor MUST NOT require EQOL, parse those helpers as timing truth, or recreate them as part of core generation.
+Rules:
+
+- preview geometry is read from reconstructed source `scrFloor.transform.position`,
+- preview `trackAngle` is read from the source floor's outgoing `angleLength`,
+- source floor 0 is omitted because the initial planet pair represents that endpoint,
+- the synthetic terminal floor is omitted because it has no outgoing track angle,
+- preview rotation follows the reconstructed incoming floor-to-floor direction,
+- exact 2x and 0.5x speed changes may use `DoubleRabbit` / `DoubleSnail` icons,
+- generated tags remain EQOL-compatible for inspection,
+- every MTE-generated preview also carries the ownership tag `adofaiMTEGenerated`,
+- regeneration deletes/replaces only previews carrying that ownership tag,
+- a manually authored/EQOL `qolMultiTile_Tn` preview is preserved and auto-generation for that track is skipped.
+
+Preview decorations are visualization only. They are NEVER timing source-of-truth and are not required for Orbit runtime behavior.
+
+Multi Tile Editor MUST NOT require EQOL or parse EQOL helper tags to derive rhythm/timing.
 
 ## 13. Non-Orbit actions
 
-The generator owns the master path, configured planet setup, and configured Orbit actions.
+The generator owns the master path, configured planet setup, configured Orbit actions, and MTE-owned source-tile previews.
 
 Common/base actions are preserved once from the active base track and remapped from source musical time to the corresponding master anchor.
 
@@ -304,7 +321,7 @@ v1 does not merge arbitrary actions from every source track.
 
 ## 14. Atomic generation
 
-Generation is all-or-nothing.
+The **playable core conversion** (master path + planets + Orbit actions) is all-or-nothing.
 
 Preflight validates at least:
 
@@ -316,27 +333,28 @@ Preflight validates at least:
 - a synthesizable master path,
 - no duplicate/half-existing configured planet pairs.
 
-The generator builds a candidate copy, reconstructs and verifies it, then replaces the active editor state.
+The core generator builds a candidate copy, reconstructs and verifies it, then replaces the active editor state. Core failure MUST restore the original chart.
 
-Failure MUST restore the original chart.
+Source-tile previews are a non-gameplay post-pass. Their own update is atomic with respect to the current playable output: a preview failure restores the pre-preview playable result instead of leaving half a preview set. A preview failure does not invalidate already verified Orbit gameplay data.
 
 Generation MUST NOT mutate stored source snapshots, TrackStore cursors, or stored pivot configuration.
 
-A successful generation SHOULD behave as one editor operation and then detach the editor from the source-track binding so the generated output cannot overwrite a source snapshot accidentally.
+After generation the editor detaches from source-track binding so the output cannot overwrite a source snapshot accidentally.
 
 ## 15. Regeneration / idempotence
 
-Running generation twice with identical inputs MUST NOT duplicate configured Orbit actions or auto-created planet pairs.
+Running generation twice with identical inputs MUST NOT duplicate configured Orbit actions, auto-created planet pairs, or MTE-owned source-tile previews.
 
-Previously generated configured Orbit actions are replaced.
-
-Existing complete configured planet pairs are preserved.
+- configured Orbit actions are replaced,
+- existing complete configured planet pairs are preserved,
+- MTE-owned previews are replaced,
+- manual/EQOL previews are preserved.
 
 ## 16. Playback and seeking
 
 The output is an ordinary ADOFAI chart plus PACL2 data.
 
-Therefore Multi Tile Editor itself has no per-frame playback loop.
+Multi Tile Editor itself has no per-frame playback loop.
 
 Runtime acceptance includes:
 
@@ -381,6 +399,8 @@ Initial pivot: `c`
 | 6 | 17 | d | c | -120° | 0.6666666 |
 | 7 | 21 | c | d | -180° | 1 |
 
+The golden sample also has seven Floor preview objects for each eight-segment source rhythm: the first source endpoint is represented by the planet pair and the terminal floor is omitted. This is the v0.8 preview model.
+
 Other facts:
 
 - nominal total duration is 6 beats,
@@ -388,27 +408,29 @@ Other facts:
 - base BPM starts at 100,
 - a common SetSpeed changes BPM to 200,
 - the sample has four Planet `AddObject`s (`r`, `b`, `c`, `d`),
-- EQOL `T0_*` / `T1_*` Floor objects are not runtime requirements.
+- EQOL helper objects are not runtime requirements.
 
 The exact sample floor numbers are diagnostic only; timing/Orbit equivalence is the real contract.
 
 ## 18. Acceptance tests
 
-1. **Golden two-group** — behavior equivalent to `multitest.adofai`.
-2. **Zero-manual-decoration** — start with no configured Planet AddObjects and no dummy Orbit; generation creates everything required.
-3. **Immediate playback** — generated Orbit works before save/reload.
-4. **Three groups** — no hard-coded group-count assumption.
-5. **Different rhythms** — e.g. 135° and 120° streams merge correctly.
-6. **Simultaneous anchors** — multiple Orbit actions share a master floor safely.
-7. **Floating convergence** — near-equal endpoints merge under epsilon.
-8. **Pivot isolation** — one group's pivot never alters another's state.
-9. **Regenerate twice** — no duplicates.
-10. **Existing complete planet pair** — preserve its manual appearance/position.
-11. **Half-existing pair** — reject without modifying the chart.
-12. **No EQOL** — generation/playback still work.
-13. **Middle playback** — correct state when starting inside the region.
-14. **60 FPS / uncapped / 0.65x** — no generated-data drift.
-15. **Preflight failure** — incompatible inputs leave the chart unchanged.
+1. **Golden two-group** — Orbit behavior equivalent to `multitest.adofai`.
+2. **Golden tile previews** — two eight-segment sources generate seven Floor previews each with equivalent shape/track angles.
+3. **Zero-manual-decoration** — no configured Planet AddObjects and no dummy Orbit are required.
+4. **Immediate playback** — generated Orbit works before save/reload.
+5. **Three groups** — no hard-coded group-count assumption.
+6. **Different rhythms** — e.g. 135° and 120° streams merge correctly.
+7. **Simultaneous anchors** — multiple Orbit actions share a master floor safely.
+8. **Floating convergence** — near-equal endpoints merge under epsilon.
+9. **Pivot isolation** — one group's pivot never alters another's state.
+10. **Regenerate twice** — no duplicates.
+11. **Existing complete planet pair** — preserve its manual appearance/position.
+12. **Half-existing pair** — reject without modifying the core chart.
+13. **Manual EQOL preview** — preserve it and skip MTE preview generation for that track.
+14. **No EQOL installed** — generation/playback/preview generation still work.
+15. **Middle playback** — correct runtime state when starting inside the region.
+16. **60 FPS / uncapped / 0.65x** — no generated-data drift.
+17. **Core preflight failure** — incompatible inputs leave the chart unchanged.
 
 ## 19. Implementation boundaries
 
@@ -433,8 +455,12 @@ PACL2AutoGenerator
 OrbitEmitter
   source segments + master anchors -> OrbitDecoration actions
 
+TileDecorationGenerator
+  reconstruct source floor geometry -> EQOL-compatible Floor AddObject previews
+
 Generation
-  preflight -> candidate -> reconstruct -> validate -> atomic commit
+  core preflight -> candidate -> reconstruct -> validate -> atomic core commit
+  -> atomic visual preview post-pass
 ```
 
 There is **no MultiTile runtime renderer** in this architecture.
@@ -443,8 +469,9 @@ There is **no MultiTile runtime renderer** in this architecture.
 
 Deferred until the current generator is stable:
 
-- customizable auto-layout spacing/origin,
+- customizable preview auto-layout spacing/origin,
 - per-group default colors/skins during auto creation,
+- copying arbitrary source track styling into Floor previews,
 - arbitrary `Ease`, `lockRotation`, or radius animation,
 - source-chart midspin edge cases beyond stock analysis,
 - track-specific speed/pause maps,
