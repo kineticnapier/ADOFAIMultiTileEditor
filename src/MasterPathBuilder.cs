@@ -225,13 +225,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             try
             {
-                PropertyInfo p = type.GetProperty(name, flags);
+                System.Reflection.PropertyInfo p = type.GetProperty(name, flags);
                 if (p != null && p.GetIndexParameters().Length == 0) return p.GetValue(target, null);
             }
             catch { }
             try
             {
-                FieldInfo f = type.GetField(name, flags);
+                System.Reflection.FieldInfo f = type.GetField(name, flags);
                 if (f != null) return f.GetValue(target);
             }
             catch { }
