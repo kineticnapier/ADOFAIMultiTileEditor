@@ -2,12 +2,6 @@ using System.Collections.Generic;
 
 namespace KineticNapier.ADOFAIMultiTileEditor
 {
-    internal sealed class SpeedPoint
-    {
-        internal double Beat;
-        internal double Speed;
-    }
-
     internal sealed class SourceFloorPoint
     {
         internal int Floor;
@@ -56,7 +50,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal double EndSeconds;
 
         internal readonly List<TrackSegment> Segments = new List<TrackSegment>();
-        internal readonly List<SpeedPoint> SpeedMap = new List<SpeedPoint>();
         internal readonly List<SourceFloorPoint> SourceFloors = new List<SourceFloorPoint>();
     }
 
