@@ -23,7 +23,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             entry.OnToggle = OnToggle;
             entry.OnGUI = OnGUI;
             entry.OnUpdate = OnUpdate;
-            logger.Log("ADOFAI Multi Tile Editor Prototype v0.6.0 loaded.");
+            logger.Log("ADOFAI Multi Tile Editor Prototype v0.7.0 loaded.");
             return true;
         }
 
@@ -50,7 +50,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static void OnGUI(UnityModManager.ModEntry entry)
         {
-            GUILayout.Label("Multi Tile Editor prototype v0.6.0 - verified Orbit emitter");
+            GUILayout.Label("Multi Tile Editor prototype v0.7.0 - automatic PACL2 output");
             scnEditor editor = ADOBase.editor;
             if (editor == null)
             {
@@ -58,7 +58,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 return;
             }
 
-            GUILayout.Label("Pipeline: source TrackAnalyzer -> timeline union -> verified master path -> PACL2 OrbitDecoration candidate -> stock reconstruction -> atomic commit.");
+            GUILayout.Label("Pipeline: source TrackAnalyzer -> timeline union -> verified master path -> automatic PACL2 planet setup -> OrbitDecoration emission -> stock reconstruction -> atomic commit.");
             GUILayout.Space(6f);
 
             GUILayout.BeginHorizontal();
@@ -186,7 +186,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 Try(delegate
                 {
                     int baseTrackIndex = store.ActiveIndex;
-                    OrbitCommitResult result = OrbitEmitter.GenerateAndCommit(editor, lastPlan, lastPathPreview, store.Tracks, baseTrackIndex);
+                    OrbitCommitResult result = PACL2AutoGenerator.GenerateAndCommit(editor, lastPlan, lastPathPreview, store.Tracks, baseTrackIndex);
                     store.DetachActive();
                     status = result.Diagnostic + " Editor is now detached from source snapshots.";
                 });
@@ -200,14 +200,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             GUI.enabled = true;
             GUILayout.EndHorizontal();
 
-            GUILayout.Label("First generation preflight requires exactly one PACL2 AddObject for every configured planet tag and one dummy OrbitDecoration using one configured A/B pair. Generated runs replace configured Orbit actions instead of duplicating them.");
+            GUILayout.Label("v0.7 can create missing A/B Planet AddObject decorations and the internal Orbit template automatically. Existing complete A/B pairs are preserved; a half-existing pair is rejected so the generator does not guess its layout.");
 
             if (lastPlan != null) DrawPlan(lastPlan);
             if (lastPathPreview != null) DrawMasterPathPreview(lastPlan, lastPathPreview);
 
             GUILayout.Space(4f);
             GUILayout.Label(status);
-            GUILayout.Label("v0.6 removes source Twirl/MultiPlanet/Pause/Hold/FreeRoam actions from the synthesized master path, remaps the active base chart's remaining actions by musical anchor, emits OrbitDecoration actions, validates the complete candidate, then commits it.");
+            GUILayout.Label("v0.7 also normalizes generated custom-event data types in memory and reapplies floor effects, so OrbitDecoration should work immediately without a save/reload cycle.");
         }
 
         private static void DrawPlan(GenerationPlan plan)

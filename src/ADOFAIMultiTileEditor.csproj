@@ -33,6 +33,7 @@
     <Compile Include="TimelineMerger.cs" />
     <Compile Include="MasterPathBuilder.cs" />
     <Compile Include="OrbitEmitter.cs" />
+    <Compile Include="PACL2AutoGenerator.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
 

@@ -8,31 +8,38 @@ Current direction:
 - Analyze each two-planet source track with stock reconstructed floor data.
 - Merge the independent source rhythms into one master timeline/path.
 - Synthesize and verify a stock-valid master `angleData` path from that merged timeline.
+- Automatically create missing PACL2 planet `AddObject` decorations for complete groups.
 - Emit PACL2 Orbit Decoration actions for every group on that master timeline.
 - Keep playback/runtime behavior in PACL2 instead of implementing another renderer.
 
-See [SPEC.md](SPEC.md) for the frozen v1 behavior and the observations taken from the hand-built golden sample.
+See [SPEC.md](SPEC.md) for the v1 behavior and the observations taken from the hand-built golden sample.
 
 ## Current status
 
-Prototype v0.6.0 implements the first end-to-end generator:
+Prototype v0.7.0 implements an end-to-end generator with automatic PACL2 setup:
 
 1. `TrackAnalyzer` reconstructs every stored source snapshot and extracts each two-planet segment.
 2. `TimelineMerger` unions all segment boundaries with a `1e-6` beat epsilon.
 3. `MasterPathBuilder` synthesizes an ordinary master `angleData` path and verifies it through stock reconstruction.
-4. `OrbitEmitter` builds a complete candidate chart, validates the initial PACL2 planet objects, remaps the active base chart's non-geometry actions to master anchors, replaces prior configured Orbit actions, and emits one `OrbitDecoration` per source segment.
-5. The complete candidate is reconstructed and verified before it replaces the active editor chart. Source-track snapshots are not mutated by generation.
+4. `PACL2AutoGenerator` creates missing A/B Planet `AddObject` decorations on a deterministic grid and creates an internal `OrbitDecoration` template when none exists.
+5. `OrbitEmitter` builds the candidate chart, remaps the active base chart's non-geometry actions to master anchors, replaces prior configured Orbit actions, and emits one `OrbitDecoration` per source segment.
+6. Generated custom-event values are normalized back to PACL2/ADOFAI metadata types in memory, then floor effects are reapplied so playback works immediately without a save/reload cycle.
+7. The complete candidate is reconstructed and verified before it replaces the active editor chart. Source-track snapshots are not mutated by generation.
 
 After a successful generation the editor is detached from the source-track queue so switching tracks cannot accidentally overwrite a stored source snapshot with the generated master chart.
 
-### First-generation preflight
+### Automatic planet setup
 
-The active output/base chart must already contain:
+For each configured track:
 
-- exactly one PACL2 `AddObject` planet for every configured A/B tag, and
-- one dummy PACL2 `OrbitDecoration` whose moving/center tags are one configured A/B pair.
+- if neither A nor B Planet `AddObject` exists, v0.7 creates both automatically;
+- if both already exist, they are preserved unchanged;
+- if only one exists, generation aborts rather than guessing how to position the missing half;
+- duplicate planet tags remain an error.
 
-The dummy event is used only as a compatibility template. v0.6 explicitly overwrites every field owned by the v1 specification (`floor`, `duration`, `tag`, `centerTag`, `amount`, `lockRotation`, `dstRadiusMultiplier`, `ease`, `angleOffset`, and `eventTag`). On regeneration, an already-generated Orbit action can serve as the template.
+Auto-created groups use a deterministic grid. Within each group the moving planet starts one tile to the left of the configured initial pivot, matching the orientation used by the hand-built golden sample. Planet A uses `DefaultRed`, Planet B uses `DefaultBlue`; appearance customization remains an ordinary PACL2 editing task after generation.
+
+A manually authored dummy Orbit event is no longer required when PACL2 has registered its `OrbitDecoration` metadata. The generator creates a temporary typed template internally and removes/replaces it during normal Orbit emission.
 
 Source geometry actions (`Twirl`, `MultiPlanet`, `Pause`, `Hold`, and `FreeRoam*`) are not copied onto the synthesized master path. Other actions from the active base chart are remapped from their source floor's musical time to the corresponding master anchor. Common timing maps are still required by the planner.
 

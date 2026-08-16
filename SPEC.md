@@ -2,43 +2,44 @@
 
 Status: **Draft / implementation contract**
 
-This document freezes the first useful version of the multi-tile workflow before more code is added. It is based on the hand-built `multitest.adofai` golden sample and on the behavior already verified in the stock ADOFAI editor.
+This document defines the first useful multi-tile workflow. It is based on the hand-built `multitest.adofai` golden sample and on behavior verified through the stock ADOFAI editor.
 
-The important architectural decision is:
+The core architectural rule is:
 
-> Multi Tile Editor is not a second renderer and it is not a per-frame multi-planet runtime. It converts several ordinary two-planet source charts into one ordinary ADOFAI master timeline plus PACL2 `OrbitDecoration` actions.
+> Multi Tile Editor is a converter, not another renderer. It converts several ordinary two-planet source charts into one ordinary ADOFAI master timeline plus PACL2 `AddObject` / `OrbitDecoration` data.
 
 ## 1. Goal
 
 Given any number of independently edited two-planet source tracks, generate a single playable chart where every group follows its own source rhythm at the same time.
 
-The mod should eliminate the repetitive work of manually:
+The mod should automate:
 
-- finding every hit time across every source chart,
-- constructing a master path containing the union of those hit times,
+- source-track storage and switching,
+- extracting each track's actual reconstructed movement/timing,
+- merging all hit times into one master timeline,
+- synthesizing a stock-valid master path,
 - alternating each group's moving/pivot planet,
-- calculating each group's Orbit Decoration angle and duration,
-- placing all Orbit Decoration actions on the correct master floors.
+- creating missing initial PACL2 planet decorations,
+- calculating and placing every PACL2 `OrbitDecoration`,
+- committing only after the complete candidate validates.
 
-The stock ADOFAI editor remains the chart editor. PACL2 remains responsible for playing `OrbitDecoration`.
+The stock ADOFAI editor remains the chart editor. PACL2 remains responsible for runtime Orbit playback.
 
 ## 2. Explicit non-goals for v1
 
-The following are deliberately out of scope for v1:
+The following remain out of scope:
 
 - external editor,
 - custom multi-planet renderer,
-- frame-by-frame planet simulation in this mod,
-- arbitrary radius changes (`dstRadiusMultiplier` is fixed to `1`),
-- groups containing more than two planets,
-- automatic creation or automatic positioning of planet decorations,
-- VS Code-style split branch editor,
-- DAG/shared-node editor,
-- merging arbitrary track-specific gameplay/events,
-- track-specific `SetSpeed`, `Pause`, or other timing-map differences,
-- reproducing the exact visual shape or exact floor numbers of the golden sample's master path.
-
-These can be added later only after the v1 conversion is stable.
+- per-frame planet simulation in this mod,
+- arbitrary radius animation (`dstRadiusMultiplier` stays `1`),
+- groups larger than two planets,
+- VS Code-style split branch UI,
+- DAG/shared-node editing,
+- arbitrary per-track gameplay/decor event merging,
+- track-specific `SetSpeed`, `Pause`, or incompatible timing maps,
+- reproducing the exact visual geometry or exact floor numbers of the golden sample,
+- automatically recreating the EQOL helper-floor visualization.
 
 ## 3. Terminology
 
@@ -48,121 +49,108 @@ A normal ADOFAI chart snapshot edited through the stock editor. One source track
 
 ### Group
 
-A pair of planet decorations:
+A pair of PACL2 Planet `AddObject` decorations with:
 
-- Planet A tag
-- Planet B tag
-- initial pivot (`A` or `B`)
+- Planet A tag,
+- Planet B tag,
+- initial pivot (`A` or `B`).
 
 A group's pivot state is completely independent of every other group.
 
 ### Segment
 
-One movement from one source-track hit to the next. A segment has at least:
+One movement from one source-track hit to the next. A segment contains at least:
 
 - source floor/index,
-- absolute start time,
-- absolute end time,
+- start/end musical time,
 - signed travel angle,
 - Orbit duration,
-- moving planet,
-- pivot planet.
+- moving tag,
+- center/pivot tag.
 
 ### Master timeline
 
-The ordered union of hit/start times from every source track.
+The ordered union of segment start/boundary times from every source track.
 
 ### Master path
 
-The ordinary ADOFAI `angleData` path synthesized so that its floors occur at the master timeline instants. It exists primarily to provide deterministic event anchors and timing.
+The ordinary ADOFAI `angleData` path synthesized so its floors occur at the master timeline instants.
 
 ### Golden sample
 
-The hand-built `multitest.adofai` used as the first behavioral reference.
+The hand-built `multitest.adofai` reference chart.
 
 ## 4. User workflow
 
-The intended v1 workflow is queue-like:
-
-1. Edit one source chart in the stock ADOFAI editor.
+1. Edit one source chart in the stock editor.
 2. Store it as a track.
-3. Edit the next source chart.
-4. Store it as another track.
-5. Repeat for any number of tracks.
-6. Configure each track's Planet A tag, Planet B tag, and initial pivot.
-7. Ensure the output/base chart already contains the two initial `AddObject` planet decorations for each group.
-8. Generate the whole multi-tile region in one operation.
+3. Edit/store the next source chart.
+4. Repeat for any number of tracks.
+5. Configure each track's Planet A tag, Planet B tag, and initial pivot.
+6. Run whole-region analysis.
+7. Verify the synthesized master path.
+8. Generate the output in one operation.
 
-The current per-step `Generate Multi Tile Step` model is superseded by this specification. Generation is a **whole-region conversion**, not a cursor-advance loop.
+The old per-step `Generate Multi Tile Step` model is superseded. Generation is a **whole-region conversion**.
+
+Initial planet decorations do not need to be manually created when both are absent: the generator creates them automatically. Existing complete A/B pairs are preserved.
 
 ## 5. Source-track constraints
 
-For v1, all stored source tracks MUST:
+All stored source tracks MUST:
 
-- belong to the same song/timing context,
-- use the same common BPM / timing-affecting event map,
-- start the generated region at the same absolute song time,
-- finish the generated region at the same absolute song time within the timeline epsilon,
+- share the same song/timing context,
+- use the same common BPM/timing-affecting map,
+- start the generated region at the same musical time,
+- finish at the same musical time within timeline epsilon,
 - represent exactly one two-planet group each.
 
-The source tracks MAY have different numbers of floors and different rhythms.
-
-The source tracks MAY have different travel angles at the same musical time.
+Tracks MAY have different floor counts, rhythms, and travel angles.
 
 Track count is arbitrary. The implementation MUST NOT assume exactly two groups.
 
 ### Timing-event restriction
 
-v1 does not attempt to merge competing timing maps. If one source track changes BPM or pauses independently of another source track, generation MUST fail preflight with a useful diagnostic rather than guessing.
-
-Common timing events belong to the base/master chart and are preserved once.
+v1 does not merge competing timing maps. Incompatible track-specific speed/pause behavior MUST fail preflight instead of being guessed.
 
 ## 6. Source-track analysis
 
-Track analysis MUST use the stock game's reconstructed floor data whenever possible.
+Analysis MUST use stock reconstructed floor data whenever possible.
 
-The converter MUST NOT derive the real movement only from raw `angleData` subtraction.
+For each source segment the analyzer obtains:
 
-For every source segment, analysis must obtain:
-
-- absolute start time,
-- absolute end time,
+- start beat,
+- end beat,
 - signed travel angle,
-- duration in the units required by PACL2 at the output anchor,
-- source floor/index for diagnostics.
+- PACL2 duration,
+- source floor for diagnostics.
 
-### Angle
+`scrFloor.angleLength` is radians in the current build. It belongs to the movement **leaving** that floor.
 
-The angle used by `OrbitDecoration.amount` is signed.
-
-The analyzer MUST preserve the real travel direction, including direction changes caused by stock game state such as Twirl. It MUST NOT assume that every Orbit amount is negative merely because the golden sample uses negative values.
-
-`angleLength` is known to be radians in the current game build and may be useful for magnitude, but magnitude alone is not sufficient to determine direction.
+The analyzer currently uses reconstructed `angleLength`, `entryBeat`, `isCCW`, and speed state. It MUST NOT infer the real movement from raw `angleData` subtraction alone.
 
 ### Duration
 
-Duration is per segment, not per generated step and not shared between groups.
+Duration is per segment, not shared between groups.
 
-The golden sample happens to contain ordinary segments where:
+The golden sample contains ordinary cases where:
 
 ```text
 duration ≈ abs(amount) / 180
 ```
 
-For example:
+Examples:
 
-- 180° -> 1 beat
-- 135° -> 0.75 beat
-- 120° -> 0.6666666... beat
-- 90° -> 0.5 beat
+- 180° -> 1
+- 135° -> 0.75
+- 120° -> 0.6666666...
+- 90° -> 0.5
 
-This is an observed property of the sample, not permission to ignore the game's timing calculation. The analyzer should use reconstructed game timing so later support does not depend on a fragile formula.
+Game reconstruction remains the source of truth.
 
 ## 7. Timeline merge
 
-The generator first converts every source track into a list of timed segments.
-
-It then creates the master timeline from the sorted union of segment boundaries/start times.
+The generator merges source segment boundaries by musical time, never by source floor number.
 
 Conceptually:
 
@@ -173,46 +161,37 @@ Track B: 0 ---- 1 ---- 1.666... ---- 2.333... ---- ...
 Master : 0 ---- 1 ---- 1.666... -- 1.75 -- 2.333... -- 2.5 -- ...
 ```
 
-Important rules:
+Rules:
 
-- Merge by **musical/song time**, never by source floor number.
-- Multiple groups may start a segment at the same master instant.
-- Multiple Orbit Decoration actions may therefore share one master floor.
-- Ordering between different groups at the same instant must be deterministic but has no semantic effect.
-- No frame-count-based handoff or stability test belongs in this mod.
+- simultaneous source starts share one master anchor,
+- several Orbit actions may share one master floor,
+- event ordering between groups is deterministic,
+- no frame-count/stability logic belongs in this generator.
 
 ### Timeline epsilon
 
-Floating-point representations such as repeated `0.6666666` must not create accidental microscopic splits.
-
-Initial v1 comparison tolerance:
+Initial v1 tolerance:
 
 ```text
-1e-6 beat-equivalent, or the corresponding absolute-song-time tolerance
+1e-6 beat
 ```
 
-The implementation should keep the tolerance in one named constant and test it explicitly.
-
-The exact floor split seen in a manually authored golden chart is not normative if two instants are musically equivalent within tolerance.
+This intentionally merges decimal representations such as `5.9999996` and `6.0` when they are musically intended to coincide.
 
 ## 8. Master path synthesis
 
-After the timeline is merged, the generator creates an ordinary ADOFAI path whose floor timing matches the master timeline.
+The builder converts adjacent master-anchor gaps into ordinary ADOFAI `angleData` and verifies the result through stock `RemakePath` reconstruction.
 
 Requirements:
 
-- The master path MUST reproduce every merged timeline instant within tolerance.
-- The exact visual geometry is not important.
-- The exact resulting floor numbers are not part of the public contract.
-- The builder MAY use `999`/midspin anchors internally when useful.
-- Path construction should rely on stock ADOFAI reconstruction/validation after writing the candidate data.
-- The builder MUST verify the reconstructed master floor times after synthesis before committing.
+- every master instant must reconstruct within tolerance,
+- visual geometry is secondary,
+- exact output floor numbers are not part of the public contract,
+- stock `angleLength` and `entryBeat`/cumulative timing are checked before commit.
 
-The golden sample contains `999` entries in its master `angleData`; those are an implementation detail of the hand-built timing path, not a requirement to copy that exact sequence.
+Current synthesis supports at most `360°` / `2 beats` between adjacent master anchors. Longer gaps are deferred until helper/midspin insertion is implemented.
 
-## 9. Group/pivot state
-
-Each group owns its own pivot state.
+## 9. Group / pivot state
 
 For a group with tags `A` and `B`:
 
@@ -221,25 +200,23 @@ pivot B -> move A around B -> pivot becomes A
 pivot A -> move B around A -> pivot becomes B
 ```
 
-The pivot swaps after every emitted source segment for that group.
+The pivot swaps once per emitted source segment for that group only.
 
-One group's pivot changes MUST NOT affect any other group.
-
-Initial pivot is configurable per track because the golden sample demonstrates different valid starting pivots between groups.
+Initial pivot is configurable per track.
 
 ## 10. Orbit Decoration emission
 
-For every analyzed source segment, emit exactly one PACL2 `OrbitDecoration` action at the corresponding master timeline anchor.
+For every analyzed source segment, emit exactly one PACL2 `OrbitDecoration` at the corresponding master anchor.
 
-The semantic fields are:
+Semantic fields:
 
 ```json
 {
   "eventType": "OrbitDecoration",
   "duration": "<segment duration>",
-  "tag": "<moving planet tag>",
-  "centerTag": "<pivot planet tag>",
-  "amount": "<signed source travel angle>",
+  "tag": "<moving tag>",
+  "centerTag": "<pivot tag>",
+  "amount": "<signed travel angle>",
   "lockRotation": false,
   "dstRadiusMultiplier": 1,
   "ease": "Linear",
@@ -248,7 +225,7 @@ The semantic fields are:
 }
 ```
 
-v1 fixes the following values:
+v1 fixes:
 
 - `dstRadiusMultiplier = 1`
 - `ease = Linear`
@@ -256,35 +233,51 @@ v1 fixes the following values:
 - `angleOffset = 0`
 - `eventTag = ""`
 
-These can become options later, but they are not v1 variables.
+### Typed custom-event data
 
-### No stale template values
+Generated PACL2 data MUST retain the types declared by ADOFAI/PACL2 event metadata.
 
-The current prototype clones a dummy Orbit Decoration template. If template cloning remains necessary for compatibility, every field owned by this specification MUST be explicitly overwritten and no unrelated state may leak from the template.
+In particular, generation MUST NOT leave values such as `duration`/`amount` as `Double` or `ease` as raw `String` when PACL2 expects `Single`/enum values. The generated chart must work immediately without requiring a save/reload Decode cycle.
 
-Longer term, constructing a fresh compatible event is preferable if PACL2/game APIs allow it safely.
+### Template handling
 
-## 11. Planet decorations
+If an existing configured Orbit event exists, it may be used as a compatibility template.
 
-v1 requires the output chart to already contain exactly two initial `AddObject` planet decorations per configured group.
+If none exists, the generator SHOULD create a typed temporary Orbit event from registered PACL2 metadata. The user should not need to author a dummy Orbit manually.
 
-The user supplies their initial visual positions once.
+Every v1-owned field is explicitly overwritten before emission.
 
-The generator:
+## 11. Planet decoration generation
 
-- validates that every configured tag exists,
-- validates that A and B tags are distinct,
-- validates that tags are unique across groups unless a future spec explicitly allows sharing,
-- does not reposition the planets,
-- does not regenerate their appearance/color settings.
+For every configured group, the output must end with exactly one Planet `AddObject` for A and one for B.
 
-After initialization, movement is driven only by generated Orbit Decoration actions.
+Rules:
 
-This deliberately avoids turning Multi Tile Editor into another renderer.
+- if both A and B already exist, preserve them unchanged;
+- if neither exists, create both automatically;
+- if only one exists, fail rather than guessing the missing half's relation to a manually positioned planet;
+- duplicate configured tags are an error;
+- A/B tags must be distinct and unique across groups.
+
+### Automatic layout
+
+Auto-created groups use a deterministic grid.
+
+Within each group:
+
+- the configured initial pivot is the center planet,
+- the moving planet starts one tile to the left of the center,
+- Planet A defaults to `DefaultRed`,
+- Planet B defaults to `DefaultBlue`,
+- the objects are Tile-relative and use ordinary PACL2 Planet defaults for non-owned visual fields.
+
+The user can restyle/reposition complete pairs later through normal PACL2 editing; regeneration preserves existing complete pairs.
+
+This is still data generation, not a runtime renderer.
 
 ## 12. EQOL independence
 
-The golden sample contains helper `AddObject` floor decorations generated with EditorQoL, including tags such as:
+The golden sample contains EQOL-generated Floor `AddObject` helpers with tags such as:
 
 ```text
 T0
@@ -295,76 +288,64 @@ qolMultiTile_T0
 qolMultiTileRhythm_...
 ```
 
-These are reference/visualization data only.
+They are reference/visualization data only.
 
-Multi Tile Editor MUST NOT:
-
-- require EditorQoL,
-- parse those helper tags as source-of-truth timing,
-- depend on those floor decorations being present,
-- generate them as part of the core v1 conversion.
-
-All required rhythm information comes from the stored source tracks/game reconstruction.
+Multi Tile Editor MUST NOT require EQOL, parse those helpers as timing truth, or recreate them as part of core generation.
 
 ## 13. Non-Orbit actions
 
-The generator owns only the multi-tile master path and the Orbit Decoration actions for configured groups.
+The generator owns the master path, configured planet setup, and configured Orbit actions.
 
-Common/base actions such as the golden sample's shared `SetSpeed` and `SetHitsound` are preserved once from the base chart.
+Common/base actions are preserved once from the active base track and remapped from source musical time to the corresponding master anchor.
 
-v1 does not merge arbitrary per-track actions. If source tracks contain conflicting/non-common actions inside the generation region, preflight should reject or explicitly ignore them according to a narrow allowlist; it must not silently duplicate everything.
+Source geometry actions such as `Twirl`, `MultiPlanet`, `Pause`, `Hold`, and `FreeRoam*` are not copied onto the synthesized master path.
+
+v1 does not merge arbitrary actions from every source track.
 
 ## 14. Atomic generation
 
 Generation is all-or-nothing.
 
-Before touching the active LevelData, preflight MUST validate:
+Preflight validates at least:
 
-- at least one stored track,
-- analyzable floor timings,
-- equal region start time,
-- equal region end time within tolerance,
-- compatible/common timing map,
-- valid distinct A/B tags for every group,
-- required initial planet decorations,
-- PACL2 Orbit Decoration compatibility,
-- a synthesizable master timeline.
+- stored/analyzable tracks,
+- equal region start/end timing,
+- compatible timing maps,
+- valid unique A/B tags,
+- PACL2 `AddObject` and `OrbitDecoration` metadata availability,
+- a synthesizable master path,
+- no duplicate/half-existing configured planet pairs.
 
-The generator should build a complete candidate LevelData copy in memory, reconstruct it with stock game code, validate it, and only then replace the active editor state.
+The generator builds a candidate copy, reconstructs and verifies it, then replaces the active editor state.
 
-Failure MUST leave the chart unchanged.
+Failure MUST restore the original chart.
 
-A successful generation SHOULD be one stock-editor Undo step.
+Generation MUST NOT mutate stored source snapshots, TrackStore cursors, or stored pivot configuration.
 
-Generation MUST NOT mutate TrackStore cursors or pivot state as a side effect. Track snapshots are inputs; generation should behave as a pure conversion from inputs to candidate output.
+A successful generation SHOULD behave as one editor operation and then detach the editor from the source-track binding so the generated output cannot overwrite a source snapshot accidentally.
 
 ## 15. Regeneration / idempotence
 
-Running generation twice with the same tracks and configuration MUST NOT duplicate Orbit Decoration actions.
+Running generation twice with identical inputs MUST NOT duplicate configured Orbit actions or auto-created planet pairs.
 
-Before commit, the generator should replace previously generated Orbit actions belonging to the configured group tag pairs in the target region rather than append blindly.
+Previously generated configured Orbit actions are replaced.
 
-The output of repeated generation with identical inputs should be structurally equivalent.
+Existing complete configured planet pairs are preserved.
 
 ## 16. Playback and seeking
 
-The generated result is an ordinary ADOFAI chart plus PACL2 Orbit Decoration events.
+The output is an ordinary ADOFAI chart plus PACL2 data.
 
-Therefore:
+Therefore Multi Tile Editor itself has no per-frame playback loop.
 
-- Multi Tile Editor itself should have no per-frame playback loop.
-- FPS independence belongs to PACL2 Orbit Decoration runtime behavior.
-- playback speed independence belongs to PACL2 Orbit Decoration runtime behavior.
-- mid-level playback/seek should work because the generated events are anchored to deterministic stock floors/times.
-
-Acceptance must include:
+Runtime acceptance includes:
 
 - 60 FPS,
 - uncapped FPS,
 - reduced playback speed such as 0.65x,
 - starting playback from the middle of the generated region.
 
-The previously fixed PACL2 stable-handoff behavior is the runtime layer; this generator should not reimplement it.
+FPS/playback-speed stability belongs to the patched PACL2 Orbit runtime, not to this generator.
 
 ## 17. Golden sample observations
 
@@ -374,24 +355,22 @@ The hand-built sample contains two independent groups.
 
 Initial pivot: `b`
 
-| # | Master floor in sample | Moving | Center | Amount | Duration |
+| # | Sample floor | Moving | Center | Amount | Duration |
 |---|---:|---|---|---:|---:|
 | 0 | 1  | r | b | -180° | 1 |
 | 1 | 2  | b | r | -135° | 0.75 |
 | 2 | 7  | r | b | -135° | 0.75 |
-| 3 | 10 | b | r | -90°  | 0.5 |
+| 3 | 10 | b | r | -90° | 0.5 |
 | 4 | 11 | r | b | -135° | 0.75 |
 | 5 | 16 | b | r | -135° | 0.75 |
-| 6 | 19 | r | b | -90°  | 0.5 |
+| 6 | 19 | r | b | -90° | 0.5 |
 | 7 | 20 | b | r | -180° | 1 |
-
-Nominal total duration: `6` beat-units across the sample timing context.
 
 ### Group `c` / `d`
 
 Initial pivot: `c`
 
-| # | Master floor in sample | Moving | Center | Amount | Duration |
+| # | Sample floor | Moving | Center | Amount | Duration |
 |---|---:|---|---|---:|---:|
 | 0 | 1  | d | c | -180° | 1 |
 | 1 | 2  | c | d | -120° | 0.6666666 |
@@ -402,77 +381,77 @@ Initial pivot: `c`
 | 6 | 17 | d | c | -120° | 0.6666666 |
 | 7 | 21 | c | d | -180° | 1 |
 
-Stored decimal total: about `5.9999996`, which is musically intended to coincide with `6`. This is the motivating example for timeline epsilon handling.
+Other facts:
 
-### Other golden-sample facts
+- nominal total duration is 6 beats,
+- repeated `0.6666666` stores about `5.9999996`, motivating timeline epsilon,
+- base BPM starts at 100,
+- a common SetSpeed changes BPM to 200,
+- the sample has four Planet `AddObject`s (`r`, `b`, `c`, `d`),
+- EQOL `T0_*` / `T1_*` Floor objects are not runtime requirements.
 
-- Base BPM starts at `100`.
-- A common `SetSpeed` changes BPM to `200` at sample floor `2`.
-- Both groups can start actions on the same master floor.
-- Later actions occur at different master floors because their rhythms differ.
-- The sample contains four initial Planet `AddObject` decorations with tags `r`, `b`, `c`, `d`.
-- The EQOL-generated `T0_*` / `T1_*` Floor decorations are not required by runtime behavior.
+The exact sample floor numbers are diagnostic only; timing/Orbit equivalence is the real contract.
 
-The exact master floor numbers above are useful for regression comparison, but **timing equivalence is the real requirement**. A generated chart may use a different but stock-valid master path if the reconstructed hit times and Orbit behavior match.
+## 18. Acceptance tests
 
-## 18. Acceptance tests for the first real generator
-
-The first implementation is not considered usable until all of these pass:
-
-1. **Golden two-group test** — regenerate behavior equivalent to `multitest.adofai` from its two source rhythms.
-2. **Three-group test** — prove there is no hard-coded group-count assumption.
-3. **Different rhythm lengths** — e.g. 135° vs 120° segments merge into one master timeline correctly.
-4. **Simultaneous anchors** — multiple Orbit actions may share one master floor.
-5. **Floating convergence** — `5.9999996` and `6.0`-style endpoints converge under tolerance instead of creating accidental micro-timing.
-6. **Pivot isolation** — swapping one group's pivot never modifies another group.
-7. **Regenerate twice** — no duplicate Orbit actions.
-8. **No EQOL installed** — generation and playback still work.
-9. **Middle playback** — starting inside the region shows correct planet positions.
-10. **60 FPS / uncapped / 0.65x** — no drift attributable to the generated data.
-11. **Preflight failure** — incompatible timing maps or missing tags leave the active chart unchanged.
+1. **Golden two-group** — behavior equivalent to `multitest.adofai`.
+2. **Zero-manual-decoration** — start with no configured Planet AddObjects and no dummy Orbit; generation creates everything required.
+3. **Immediate playback** — generated Orbit works before save/reload.
+4. **Three groups** — no hard-coded group-count assumption.
+5. **Different rhythms** — e.g. 135° and 120° streams merge correctly.
+6. **Simultaneous anchors** — multiple Orbit actions share a master floor safely.
+7. **Floating convergence** — near-equal endpoints merge under epsilon.
+8. **Pivot isolation** — one group's pivot never alters another's state.
+9. **Regenerate twice** — no duplicates.
+10. **Existing complete planet pair** — preserve its manual appearance/position.
+11. **Half-existing pair** — reject without modifying the chart.
+12. **No EQOL** — generation/playback still work.
+13. **Middle playback** — correct state when starting inside the region.
+14. **60 FPS / uncapped / 0.65x** — no generated-data drift.
+15. **Preflight failure** — incompatible inputs leave the chart unchanged.
 
 ## 19. Implementation boundaries
 
-Suggested modules after the current prototype is refactored:
-
 ```text
 TrackStore
-  capture / save / switch ordinary source snapshots
+  capture / save / switch source snapshots
 
 TrackAnalyzer
-  LevelData + stock reconstructed floors
-  -> ordered timed source segments
+  stock reconstructed floors -> timed source segments
 
 TimelineMerger
-  N segment streams
-  -> normalized master timeline
+  N segment streams -> normalized master timeline
 
 MasterPathBuilder
-  master timeline + base timing map
-  -> candidate stock ADOFAI path
+  master timeline -> verified stock ADOFAI angleData
+
+PACL2AutoGenerator
+  create/preserve configured planet pairs
+  create typed Orbit template when necessary
+  normalize PACL2 event data for immediate playback
 
 OrbitEmitter
-  source segments + group config + master anchors
-  -> OrbitDecoration actions
+  source segments + master anchors -> OrbitDecoration actions
 
-MultiTileGenerator
-  preflight -> build copy -> reconstruct -> validate -> atomic commit
+Generation
+  preflight -> candidate -> reconstruct -> validate -> atomic commit
 ```
 
-There should be **no MultiTile runtime renderer** in this architecture.
+There is **no MultiTile runtime renderer** in this architecture.
 
 ## 20. Deferred questions
 
-These are intentionally postponed until v1 works:
+Deferred until the current generator is stable:
 
-- automatic planet creation/placement,
+- customizable auto-layout spacing/origin,
+- per-group default colors/skins during auto creation,
 - arbitrary `Ease`, `lockRotation`, or radius animation,
-- source-chart midspin support beyond what falls out naturally from stock analysis,
+- source-chart midspin edge cases beyond stock analysis,
 - track-specific speed/pause maps,
-- selecting a sub-region with both a start and an end cursor,
-- preserving/rejoining an arbitrary common suffix,
+- selecting arbitrary sub-regions,
+- preserving/rejoining arbitrary common suffixes,
 - branch/DAG editing UI,
 - multi-planet groups larger than two,
-- merging decoration/gameplay actions from every source track.
+- merging arbitrary decoration/gameplay actions from every source track.
 
-If any of these becomes necessary, update this document first, then change code.
+If one of these becomes necessary, update this document before changing implementation.
