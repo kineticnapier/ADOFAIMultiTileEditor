@@ -41,7 +41,6 @@ $project = Join-Path $PSScriptRoot "src\ADOFAIMultiTileEditor.csproj"
 & $msbuild $project /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:UmmDir="$UmmDir"
 if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
 
-# Guard against the previous empty-assembly failure mode.
 $dll = Join-Path $PSScriptRoot "src\bin\$Configuration\ADOFAIMultiTileEditor.dll"
 if (-not (Test-Path $dll)) { throw "Expected DLL was not produced: $dll" }
 
@@ -51,7 +50,7 @@ New-Item -ItemType Directory -Force -Path $out | Out-Null
 Copy-Item $dll $out
 Copy-Item (Join-Path $PSScriptRoot "Info.json") $out
 
-$zip = Join-Path $PSScriptRoot "ADOFAIMultiTileEditor-v0.5.0.zip"
+$zip = Join-Path $PSScriptRoot "ADOFAIMultiTileEditor-v0.6.0.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip
 Write-Host "Built: $zip"

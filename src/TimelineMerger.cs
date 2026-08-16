@@ -29,6 +29,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (track.Segments.Count == 0)
                     throw new InvalidOperationException("Track '" + track.Name + "' has no analyzable segments.");
 
+                track.SourceFloors.Clear();
                 double expectedStart = track.StartBeat;
                 for (int s = 0; s < track.Segments.Count; s++)
                 {
@@ -40,7 +41,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     expectedStart = segment.EndBeat;
                     allTimes.Add(segment.StartBeat);
                     allTimes.Add(segment.EndBeat);
+                    track.SourceFloors.Add(new SourceFloorPoint { Floor = segment.SourceFloor, Beat = segment.StartBeat });
                 }
+                TrackSegment last = track.Segments[track.Segments.Count - 1];
+                track.SourceFloors.Add(new SourceFloorPoint { Floor = last.SourceFloor + 1, Beat = last.EndBeat });
+
                 if (!NearlyEqual(expectedStart, track.EndBeat))
                     throw new InvalidOperationException("Track '" + track.Name + "' did not terminate at its analyzed end beat.");
             }
@@ -69,8 +74,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 for (int s = 0; s < track.Segments.Count; s++)
                 {
                     TrackSegment segment = track.Segments[s];
-                    int startIndex = FindAnchor(plan.Anchors, segment.StartBeat);
-                    int endIndex = FindAnchor(plan.Anchors, segment.EndBeat);
+                    int startIndex = FindAnchorIndex(plan.Anchors, segment.StartBeat);
+                    int endIndex = FindAnchorIndex(plan.Anchors, segment.EndBeat);
                     if (startIndex < 0 || endIndex < 0 || endIndex <= startIndex)
                         throw new InvalidOperationException("Could not map source segment to the merged timeline.");
                     segment.MasterAnchorIndex = startIndex;
@@ -89,7 +94,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             return Math.Abs(a - b) <= BeatEpsilon;
         }
 
-        private static int FindAnchor(IList<MasterAnchor> anchors, double beat)
+        internal static int FindAnchorIndex(IList<MasterAnchor> anchors, double beat)
         {
             for (int i = 0; i < anchors.Count; i++)
                 if (NearlyEqual(anchors[i].Beat, beat)) return i;

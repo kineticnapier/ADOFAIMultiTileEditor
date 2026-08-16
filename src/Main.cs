@@ -23,7 +23,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             entry.OnToggle = OnToggle;
             entry.OnGUI = OnGUI;
             entry.OnUpdate = OnUpdate;
-            logger.Log("ADOFAI Multi Tile Editor Prototype v0.5.0 loaded.");
+            logger.Log("ADOFAI Multi Tile Editor Prototype v0.6.0 loaded.");
             return true;
         }
 
@@ -50,7 +50,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static void OnGUI(UnityModManager.ModEntry entry)
         {
-            GUILayout.Label("Multi Tile Editor prototype v0.5.0 - master path verifier");
+            GUILayout.Label("Multi Tile Editor prototype v0.6.0 - verified Orbit emitter");
             scnEditor editor = ADOBase.editor;
             if (editor == null)
             {
@@ -58,7 +58,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 return;
             }
 
-            GUILayout.Label("v0.5 keeps whole-region planning and adds a read-only MasterPathBuilder. It synthesizes angleData from the merged anchors, temporarily reconstructs it through the stock editor, verifies angleLength/entryBeat, then restores the active chart unchanged.");
+            GUILayout.Label("Pipeline: source TrackAnalyzer -> timeline union -> verified master path -> PACL2 OrbitDecoration candidate -> stock reconstruction -> atomic commit.");
             GUILayout.Space(6f);
 
             GUILayout.BeginHorizontal();
@@ -74,6 +74,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     status = "Stored current chart as track #" + (index + 1) + ".";
                 });
             }
+            GUI.enabled = store.ActiveIndex >= 0;
             if (GUILayout.Button("Save active", GUILayout.Width(100f)))
             {
                 Try(delegate
@@ -83,9 +84,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     status = "Saved active source-track snapshot.";
                 });
             }
+            GUI.enabled = true;
             GUILayout.EndHorizontal();
 
-            GUILayout.Label("Tracks: " + store.Tracks.Count + "    (cursor/angle below are editor diagnostics only; generation no longer advances cursors)");
+            string editorBinding = store.ActiveIndex >= 0 ? ("source track #" + (store.ActiveIndex + 1)) : "detached output/base";
+            GUILayout.Label("Tracks: " + store.Tracks.Count + "    editor binding: " + editorBinding);
             trackScroll = GUILayout.BeginScrollView(trackScroll, GUILayout.Height(Math.Min(360f, 52f + store.Tracks.Count * 64f)));
             for (int i = 0; i < store.Tracks.Count; i++)
             {
@@ -128,9 +131,21 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 GUILayout.BeginHorizontal();
                 GUILayout.Space(18f);
                 GUILayout.Label("A tag", GUILayout.Width(40f));
-                track.PlanetATag = GUILayout.TextField(track.PlanetATag ?? "", GUILayout.Width(90f));
+                string oldA = track.PlanetATag ?? "";
+                string newA = GUILayout.TextField(oldA, GUILayout.Width(90f));
+                if (!string.Equals(oldA, newA, StringComparison.Ordinal))
+                {
+                    track.PlanetATag = newA;
+                    InvalidatePlan();
+                }
                 GUILayout.Label("B tag", GUILayout.Width(40f));
-                track.PlanetBTag = GUILayout.TextField(track.PlanetBTag ?? "", GUILayout.Width(90f));
+                string oldB = track.PlanetBTag ?? "";
+                string newB = GUILayout.TextField(oldB, GUILayout.Width(90f));
+                if (!string.Equals(oldB, newB, StringComparison.Ordinal))
+                {
+                    track.PlanetBTag = newB;
+                    InvalidatePlan();
+                }
                 GUILayout.Label("initial pivot: " + (track.PivotIsA ? "A" : "B"), GUILayout.Width(92f));
                 if (GUILayout.Button("swap", GUILayout.Width(50f)))
                 {
@@ -143,6 +158,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             GUILayout.Space(6f);
             GUILayout.BeginHorizontal();
+            GUI.enabled = store.ActiveIndex >= 0;
             if (GUILayout.Button("Analyze whole-region plan", GUILayout.Width(210f)))
             {
                 Try(delegate
@@ -163,20 +179,35 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     status = lastPathPreview.Diagnostic;
                 });
             }
+
+            GUI.enabled = lastPlan != null && lastPathPreview != null;
+            if (GUILayout.Button("Generate verified output", GUILayout.Width(175f)))
+            {
+                Try(delegate
+                {
+                    int baseTrackIndex = store.ActiveIndex;
+                    OrbitCommitResult result = OrbitEmitter.GenerateAndCommit(editor, lastPlan, lastPathPreview, store.Tracks, baseTrackIndex);
+                    store.DetachActive();
+                    status = result.Diagnostic + " Editor is now detached from source snapshots.";
+                });
+            }
+
+            GUI.enabled = lastPlan != null;
             if (GUILayout.Button("Clear plan", GUILayout.Width(90f)))
             {
-                lastPlan = null;
-                lastPathPreview = null;
+                InvalidatePlan();
             }
             GUI.enabled = true;
             GUILayout.EndHorizontal();
+
+            GUILayout.Label("First generation preflight requires exactly one PACL2 AddObject for every configured planet tag and one dummy OrbitDecoration using one configured A/B pair. Generated runs replace configured Orbit actions instead of duplicating them.");
 
             if (lastPlan != null) DrawPlan(lastPlan);
             if (lastPathPreview != null) DrawMasterPathPreview(lastPlan, lastPathPreview);
 
             GUILayout.Space(4f);
             GUILayout.Label(status);
-            GUILayout.Label("v0.5 is still read-only after planning/path verification. OrbitEmitter and final atomic commit are intentionally not implemented yet.");
+            GUILayout.Label("v0.6 removes source Twirl/MultiPlanet/Pause/Hold/FreeRoam actions from the synthesized master path, remaps the active base chart's remaining actions by musical anchor, emits OrbitDecoration actions, validates the complete candidate, then commits it.");
         }
 
         private static void DrawPlan(GenerationPlan plan)

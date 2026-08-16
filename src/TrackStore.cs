@@ -57,6 +57,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             activeIndex = -1;
         }
 
+        internal void DetachActive()
+        {
+            activeIndex = -1;
+        }
+
         internal int StoreCurrent(scnEditor editor, string name)
         {
             if (editor == null || editor.levelData == null) throw new InvalidOperationException("Editor is not ready.");

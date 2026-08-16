@@ -44,9 +44,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 for (int i = 0; i < preview.AngleData.Count; i++)
                     candidate.angleData.Add(preview.AngleData[i]);
 
-                // This stage verifies path geometry/timing only. Existing actions are not
-                // remapped yet, so remove them from the temporary candidate to prevent a
-                // source-track Twirl/SetSpeed/etc. floor index from changing the test.
                 candidate.levelEvents.Clear();
 
                 TrackStore.RestoreSnapshot(editor, candidate, false);
@@ -67,6 +64,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             return preview;
         }
 
+        internal static void VerifyCurrentRuntime(scnEditor editor, GenerationPlan plan, MasterPathPreview preview)
+        {
+            if (editor == null || plan == null || preview == null)
+                throw new InvalidOperationException("Master path verification inputs are incomplete.");
+            VerifyRuntime(editor, plan, preview);
+        }
+
         private static void SynthesizeAngleData(GenerationPlan plan, IList<float> output)
         {
             output.Clear();
@@ -84,13 +88,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     throw new InvalidOperationException(
                         "Master interval M" + i + " -> M" + (i + 1) + " requires "
                         + travelDegrees.ToString("0.###", CultureInfo.InvariantCulture)
-                        + "°. v0.5 path synthesis currently supports at most 360° per anchor interval; helper/midspin floor insertion is not implemented yet.");
+                        + "°. v0.6 path synthesis currently supports at most 360° per anchor interval; helper/midspin floor insertion is not implemented yet.");
                 }
 
-                // For a normal clockwise two-planet path, stock ADOFAI travel is
-                //   travel = 180° - (nextHeading - previousHeading)  (mod 360°).
-                // The first tile uses the same relation against the virtual 0° start heading.
                 double heading = NormalizeDegrees(previousHeading + 180.0 - travelDegrees);
+                if (heading < 0.0001 || heading > 359.9999) heading = 0.0;
                 output.Add((float)heading);
                 previousHeading = heading;
             }
@@ -156,9 +158,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         + cumulativeBeat.ToString("0.######", CultureInfo.InvariantCulture) + " beats.");
                 }
 
-                // Also verify stock entryBeat wherever it is readable. The final synthetic
-                // portal floor has historically been unreliable, so this checks each real
-                // outgoing floor and leaves the endpoint to the angleLength accumulation above.
                 if (haveFirstEntryBeat)
                 {
                     double entryBeat;
