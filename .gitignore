@@ -1,0 +1,20 @@
+# Build output
+bin/
+obj/
+**/bin/
+**/obj/
+
+# Visual Studio / IDE
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Local build/debug artifacts
+build-success.txt
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
