@@ -28,7 +28,9 @@
     <Compile Include="Main.cs" />
     <Compile Include="TrackStore.cs" />
     <Compile Include="GameAngleProbe.cs" />
-    <Compile Include="OrbitTemplateGenerator.cs" />
+    <Compile Include="TrackAnalysis.cs" />
+    <Compile Include="TrackAnalyzer.cs" />
+    <Compile Include="TimelineMerger.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
 

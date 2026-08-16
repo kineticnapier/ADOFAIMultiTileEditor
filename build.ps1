@@ -51,7 +51,7 @@ New-Item -ItemType Directory -Force -Path $out | Out-Null
 Copy-Item $dll $out
 Copy-Item (Join-Path $PSScriptRoot "Info.json") $out
 
-$zip = Join-Path $PSScriptRoot "ADOFAIMultiTileEditor-v0.3.1.zip"
+$zip = Join-Path $PSScriptRoot "ADOFAIMultiTileEditor-v0.4.0.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip
 Write-Host "Built: $zip"

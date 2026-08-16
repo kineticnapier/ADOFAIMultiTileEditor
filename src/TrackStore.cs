@@ -32,9 +32,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
         }
 
-        internal string MovingTag { get { return PivotIsA ? PlanetBTag : PlanetATag; } }
-        internal string CenterTag { get { return PivotIsA ? PlanetATag : PlanetBTag; } }
-
         internal bool TagsReady
         {
             get
@@ -88,14 +85,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             ClampCursor(track);
         }
 
-        internal void RefreshActiveAngles(scnEditor editor)
-        {
-            if (activeIndex < 0 || activeIndex >= tracks.Count || editor == null) return;
-            TrackSlot track = tracks[activeIndex];
-            track.Angles = GameAngleProbe.Capture(editor);
-            ClampCursor(track);
-        }
-
         internal void SwitchTo(scnEditor editor, int index)
         {
             if (editor == null) throw new InvalidOperationException("Editor is not ready.");
@@ -103,7 +92,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (index == activeIndex) return;
 
             SaveActive(editor);
-            Restore(editor, tracks[index].Data);
+            RestoreSnapshot(editor, tracks[index].Data, true);
             activeIndex = index;
             tracks[index].Angles = GameAngleProbe.Capture(editor);
             ClampCursor(tracks[index]);
@@ -111,41 +100,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             int floor = tracks[index].CursorFloor;
             if (floor >= 0 && floor < editor.floors.Count)
                 editor.SelectFloor(editor.floors[floor], true);
-        }
-
-        internal void SetCursor(int index, int floor)
-        {
-            if (index < 0 || index >= tracks.Count) return;
-            tracks[index].CursorFloor = floor;
-            ClampCursor(tracks[index]);
-        }
-
-        internal void AdvanceAll(int delta)
-        {
-            for (int i = 0; i < tracks.Count; i++)
-            {
-                tracks[i].CursorFloor += delta;
-                ClampCursor(tracks[i]);
-            }
-        }
-
-        internal void SetAllCursors(int floor)
-        {
-            for (int i = 0; i < tracks.Count; i++)
-            {
-                tracks[i].CursorFloor = floor;
-                ClampCursor(tracks[i]);
-            }
-        }
-
-        internal void CommitGeneratedStep()
-        {
-            for (int i = 0; i < tracks.Count; i++)
-            {
-                tracks[i].PivotIsA = !tracks[i].PivotIsA;
-                tracks[i].CursorFloor++;
-                ClampCursor(tracks[i]);
-            }
         }
 
         internal void Remove(scnEditor editor, int index)
@@ -164,39 +118,25 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             else if (removingActive)
             {
                 activeIndex = Math.Min(index, tracks.Count - 1);
-                Restore(editor, tracks[activeIndex].Data);
+                RestoreSnapshot(editor, tracks[activeIndex].Data, true);
                 tracks[activeIndex].Angles = GameAngleProbe.Capture(editor);
                 ClampCursor(tracks[activeIndex]);
             }
         }
 
-        internal int GetSharedPrefixAngleCount()
+        internal static void RestoreSnapshot(scnEditor editor, LevelData snapshot, bool updateDecorations)
         {
-            if (tracks.Count < 2) return tracks.Count == 1 && tracks[0].Data != null ? tracks[0].Data.angleData.Count : 0;
-            int min = int.MaxValue;
-            for (int i = 0; i < tracks.Count; i++)
-            {
-                if (tracks[i].Data == null || tracks[i].Data.angleData == null) return 0;
-                min = Math.Min(min, tracks[i].Data.angleData.Count);
-            }
+            if (editor == null) throw new InvalidOperationException("Editor is not ready.");
+            if (snapshot == null) throw new InvalidOperationException("Track snapshot is empty.");
 
-            int equal = 0;
-            for (int i = 0; i < min; i++)
+            editor.customLevel.levelData = snapshot.Copy();
+            editor.DeselectFloors(false);
+            editor.RemakePath(true, true);
+            if (updateDecorations)
             {
-                float expected = tracks[0].Data.angleData[i];
-                bool same = true;
-                for (int t = 1; t < tracks.Count; t++)
-                {
-                    if (Math.Abs(tracks[t].Data.angleData[i] - expected) > 0.0001f)
-                    {
-                        same = false;
-                        break;
-                    }
-                }
-                if (!same) break;
-                equal++;
+                editor.DeselectAllDecorations();
+                editor.UpdateDecorationObjects();
             }
-            return equal;
         }
 
         private static void ClampCursor(TrackSlot track)
@@ -205,17 +145,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 ? track.Angles.Count - 1
                 : (track.Data != null && track.Data.angleData != null ? Math.Max(0, track.Data.angleData.Count - 1) : 0);
             track.CursorFloor = Math.Max(0, Math.Min(track.CursorFloor, max));
-        }
-
-        private static void Restore(scnEditor editor, LevelData snapshot)
-        {
-            if (snapshot == null) throw new InvalidOperationException("Track snapshot is empty.");
-
-            editor.customLevel.levelData = snapshot.Copy();
-            editor.DeselectFloors(false);
-            editor.RemakePath(true, true);
-            editor.DeselectAllDecorations();
-            editor.UpdateDecorationObjects();
         }
     }
 }
