@@ -69,40 +69,66 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 PlanetATag = slot.PlanetATag.Trim(),
                 PlanetBTag = slot.PlanetBTag.Trim(),
                 InitialPivotIsA = slot.PivotIsA,
-                StartBeat = ReadRequiredDouble(floors[0], "entryBeat", slot.Name),
-                EndBeat = ReadRequiredDouble(floors[floors.Count - 1], "entryBeat", slot.Name)
+                StartBeat = 0.0,
+                EndBeat = 0.0
             };
 
             ValidateUnsupportedFloorState(floors, slot.Name);
-            CaptureSpeedMap(floors, result);
+
+            // Runtime entryBeat is useful as a consistency check, but the editor's synthetic
+            // terminal floor can have an unset/non-monotonic entryBeat. Build the source
+            // region timeline cumulatively from the stock-computed angleLength instead.
+            // Under the v1 restrictions (no Pause/MultiPlanet/FreeRoam/Hold), one 180°
+            // travel angle is one beat, independent of BPM.
+            var floorBeats = new List<double>();
+            floorBeats.Add(0.0);
 
             bool pivotIsA = slot.PivotIsA;
+            double cursorBeat = 0.0;
             for (int i = 0; i + 1 < floors.Count; i++)
             {
                 object startFloor = floors[i];
                 object endFloor = floors[i + 1];
-                double startBeat = ReadRequiredDouble(startFloor, "entryBeat", slot.Name);
-                double endBeat = ReadRequiredDouble(endFloor, "entryBeat", slot.Name);
-                double duration = endBeat - startBeat;
-                if (!(duration > TimelineMerger.BeatEpsilon))
-                    throw new InvalidOperationException("Track '" + slot.Name + "' has a non-positive beat interval near runtime floor " + ReadFloorId(endFloor, i + 1) + ".");
 
-                double expectedMagnitude = duration * 180.0;
-                AngleCandidate current = ReadAngleCandidate(startFloor, i, expectedMagnitude);
-                AngleCandidate next = ReadAngleCandidate(endFloor, i + 1, expectedMagnitude);
-                AngleCandidate chosen = ChooseCandidate(current, next);
-                if (!chosen.Valid)
-                    throw new InvalidOperationException("Track '" + slot.Name + "' has no readable angleLength near beat " + startBeat.ToString("0.######", CultureInfo.InvariantCulture) + ".");
-
-                double tolerance = Math.Max(AngleConsistencyAbsoluteDegrees, expectedMagnitude * AngleConsistencyRelative);
-                if (chosen.ErrorDegrees > tolerance)
+                AngleCandidate chosen = ReadAngleCandidate(endFloor, i + 1);
+                if (!chosen.Valid || chosen.MagnitudeDegrees <= TimelineMerger.BeatEpsilon * 180.0)
                 {
-                    throw new InvalidOperationException(
-                        "Track '" + slot.Name + "' reconstructed timing/angle mismatch near source floor " + chosen.FloorId
-                        + ": duration=" + duration.ToString("0.######", CultureInfo.InvariantCulture)
-                        + " beats expects about " + expectedMagnitude.ToString("0.###", CultureInfo.InvariantCulture)
-                        + "°, but angleLength gives " + chosen.MagnitudeDegrees.ToString("0.###", CultureInfo.InvariantCulture) + "°."
-                        + " v0.4 intentionally rejects Pause/MultiPlanet/other unsupported timing cases instead of guessing.");
+                    AngleCandidate fallback = ReadAngleCandidate(startFloor, i);
+                    if (fallback.Valid && fallback.MagnitudeDegrees > TimelineMerger.BeatEpsilon * 180.0)
+                        chosen = fallback;
+                }
+                if (!chosen.Valid || chosen.MagnitudeDegrees <= TimelineMerger.BeatEpsilon * 180.0)
+                    throw new InvalidOperationException("Track '" + slot.Name + "' has no positive readable angleLength near runtime floor " + ReadFloorId(endFloor, i + 1) + ".");
+
+                double duration = chosen.MagnitudeDegrees / 180.0;
+                double startBeat = cursorBeat;
+                double endBeat = startBeat + duration;
+
+                // When both runtime entryBeat values are monotonic, verify that they agree
+                // with angleLength. If the end value is the editor's terminal sentinel
+                // (commonly zero/unset), simply skip this check instead of rejecting it.
+                double runtimeStart;
+                double runtimeEnd;
+                string source = chosen.Source;
+                if (TryReadDouble(startFloor, "entryBeat", out runtimeStart)
+                    && TryReadDouble(endFloor, "entryBeat", out runtimeEnd)
+                    && runtimeEnd - runtimeStart > TimelineMerger.BeatEpsilon)
+                {
+                    double runtimeMagnitude = (runtimeEnd - runtimeStart) * 180.0;
+                    double tolerance = Math.Max(AngleConsistencyAbsoluteDegrees, chosen.MagnitudeDegrees * AngleConsistencyRelative);
+                    if (Math.Abs(runtimeMagnitude - chosen.MagnitudeDegrees) > tolerance)
+                    {
+                        throw new InvalidOperationException(
+                            "Track '" + slot.Name + "' reconstructed timing/angle mismatch near source floor " + chosen.FloorId
+                            + ": entryBeat interval implies " + runtimeMagnitude.ToString("0.###", CultureInfo.InvariantCulture)
+                            + "°, but angleLength gives " + chosen.MagnitudeDegrees.ToString("0.###", CultureInfo.InvariantCulture) + "°."
+                            + " v0.4 intentionally rejects unsupported timing cases instead of guessing.");
+                    }
+                    source += " + entryBeat check";
+                }
+                else
+                {
+                    source += " + cumulative beat (terminal-safe)";
                 }
 
                 string moving = pivotIsA ? result.PlanetBTag : result.PlanetATag;
@@ -117,13 +143,18 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     EndBeat = endBeat,
                     DurationBeats = duration,
                     AmountDegrees = amount,
-                    AngleSource = chosen.Source,
+                    AngleSource = source,
                     MovingTag = moving,
                     CenterTag = center
                 });
+
+                cursorBeat = endBeat;
+                floorBeats.Add(cursorBeat);
                 pivotIsA = !pivotIsA;
             }
 
+            result.EndBeat = cursorBeat;
+            CaptureSpeedMap(floors, floorBeats, result);
             return result;
         }
 
@@ -160,17 +191,17 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
         }
 
-        private static void CaptureSpeedMap(IList<object> floors, AnalyzedTrack track)
+        private static void CaptureSpeedMap(IList<object> floors, IList<double> floorBeats, AnalyzedTrack track)
         {
             double lastSpeed = double.NaN;
-            for (int i = 0; i < floors.Count; i++)
+            int count = Math.Min(floors.Count, floorBeats.Count);
+            for (int i = 0; i < count; i++)
             {
                 object floor = floors[i];
-                double beat = ReadRequiredDouble(floor, "entryBeat", track.Name);
                 double speed = ReadDouble(floor, "speed", 1.0);
                 if (double.IsNaN(lastSpeed) || Math.Abs(speed - lastSpeed) > SpeedEpsilon)
                 {
-                    track.SpeedMap.Add(new SpeedPoint { Beat = beat, Speed = speed });
+                    track.SpeedMap.Add(new SpeedPoint { Beat = floorBeats[i], Speed = speed });
                     lastSpeed = speed;
                 }
             }
@@ -196,40 +227,24 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
         }
 
-        private static AngleCandidate ReadAngleCandidate(object floor, int fallbackIndex, double expectedMagnitude)
+        private static AngleCandidate ReadAngleCandidate(object floor, int fallbackIndex)
         {
             double radians;
             if (!TryReadDouble(floor, "angleLength", out radians)) return AngleCandidate.Invalid();
             double degrees = Math.Abs(radians * Mathf.Rad2Deg);
             return new AngleCandidate
             {
-                Valid = true,
+                Valid = !double.IsNaN(degrees) && !double.IsInfinity(degrees),
                 MagnitudeDegrees = degrees,
-                ErrorDegrees = Math.Abs(degrees - expectedMagnitude),
                 IsCCW = ReadBool(floor, "isCCW", false),
                 FloorId = ReadFloorId(floor, fallbackIndex),
                 Source = "scrFloor.angleLength [rad->deg]"
             };
         }
 
-        private static AngleCandidate ChooseCandidate(AngleCandidate current, AngleCandidate next)
-        {
-            if (!current.Valid) return next;
-            if (!next.Valid) return current;
-            return next.ErrorDegrees <= current.ErrorDegrees ? next : current;
-        }
-
         private static int ReadFloorId(object floor, int fallback)
         {
             return ReadInt(floor, "seqID", fallback);
-        }
-
-        private static double ReadRequiredDouble(object target, string name, string trackName)
-        {
-            double value;
-            if (!TryReadDouble(target, name, out value))
-                throw new InvalidOperationException("Track '" + trackName + "' runtime floor has no readable " + name + ".");
-            return value;
         }
 
         private static double ReadDouble(object target, string name, double fallback)
@@ -289,7 +304,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             internal bool Valid;
             internal double MagnitudeDegrees;
-            internal double ErrorDegrees;
             internal bool IsCCW;
             internal int FloorId;
             internal string Source;
