@@ -360,12 +360,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static object SafeGetData(LevelEvent ev, string key)
         {
             if (ev == null) return null;
-            try { return ev.GetData(key); }
-            catch
-            {
-                try { return ev[key]; }
-                catch { return null; }
-            }
+            try { return ev[key]; }
+            catch { return null; }
         }
 
         private static string EventDisplayName(LevelEvent ev)
