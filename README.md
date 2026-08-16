@@ -2,16 +2,19 @@
 
 In-game prototype for editing and synchronizing multiple ADOFAI chart tracks while reusing the stock editor.
 
-Current prototype goals:
+Current direction:
 
-- Keep any number of chart tracks in RAM while using the stock ADOFAI editor.
-- Reuse the stock editor path reconstruction instead of implementing an external editor.
-- Read the stock floor travel angle and normalize radians to degrees.
-- Generate one PACL2 Orbit Decoration per stored track for a synchronized multi-tile step.
+- Keep any number of ordinary source-chart snapshots while using the stock ADOFAI editor.
+- Analyze each two-planet source track with stock reconstructed floor data.
+- Merge the independent source rhythms into one master timeline/path.
+- Emit PACL2 Orbit Decoration actions for every group on that master timeline.
+- Keep playback/runtime behavior in PACL2 instead of implementing another renderer.
+
+See [SPEC.md](SPEC.md) for the frozen v1 behavior and the observations taken from the hand-built golden sample.
 
 ## Current status
 
-Prototype v0.3.1. Track storage/switching works. Multi-tile generation now uses the stock editor selection (`scnEditor.selectedFloors`) and targets the first selected floor when multiple floors are selected. Orbit Decoration generation remains experimental.
+Prototype v0.3.1 proved track storage/switching, angle probing, and basic Orbit Decoration insertion. The previous per-step generator design is now considered experimental/obsolete; the next implementation should follow the whole-region conversion described in `SPEC.md`.
 
 ## Build
 
