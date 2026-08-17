@@ -13,6 +13,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private const double TimeConsistencyAbsoluteSeconds = 0.002;
         private const double TimeConsistencyRelative = 2.0e-4;
         private const double MinBpm = 1.0e-5;
+        private const double PrefixAngleTolerance = 0.001;
 
         internal static GenerationPlan BuildPlan(scnEditor editor, IList<TrackSlot> tracks)
         {
@@ -22,6 +23,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 throw new InvalidOperationException("Store at least one source track first.");
 
             ValidateTags(tracks);
+            ValidateCommonRegionStartAndPrefix(tracks);
 
             ADOFAI.LevelData original = editor.levelData.Copy();
             int selectedFloor = GameAngleProbe.TryGetSelectedFloorIndex(editor);
@@ -44,14 +46,19 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     editor.SelectFloor(editor.floors[selectedFloor], true);
             }
 
+            ValidateCommonRegionRuntime(analyzed);
             double masterBpm = NormalizeToMasterTimeline(analyzed);
             GenerationPlan plan = TimelineMerger.Merge(analyzed);
             plan.MasterBpm = masterBpm;
+            plan.RegionStartFloor = analyzed[0].RegionStartFloor;
+            plan.RegionStartHeading = analyzed[0].RegionStartHeading;
+            plan.RegionInheritedIsCCW = analyzed[0].RegionInheritedIsCCW;
             plan.StartSeconds = analyzed[0].StartSeconds;
             plan.EndSeconds = analyzed[0].EndSeconds;
             plan.Diagnostic = plan.Diagnostic.TrimEnd('.')
+                + "; region starts at F" + plan.RegionStartFloor
                 + "; constant master BPM " + masterBpm.ToString("0.######", CultureInfo.InvariantCulture)
-                + " (source SetSpeed maps baked into real-time segment durations).";
+                + " (source SetSpeed maps baked into region-relative real time).";
             return plan;
         }
 
@@ -59,21 +66,37 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             if (editor.floors == null || editor.floors.Count < 2)
                 throw new InvalidOperationException("Track '" + slot.Name + "' has fewer than two runtime floors.");
+            if (slot.RegionStartFloor < 0 || slot.RegionStartFloor >= editor.floors.Count)
+                throw new InvalidOperationException("Track '" + slot.Name + "' region start is outside the reconstructed path.");
+
+            object requestedStart = editor.floors[slot.RegionStartFloor];
+            if (requestedStart == null)
+                throw new InvalidOperationException("Track '" + slot.Name + "' region start floor is unavailable.");
+            if (ReadBool(requestedStart, "midSpin", false))
+                throw new InvalidOperationException("Track '" + slot.Name + "' region start is a midspin floor; choose a landable floor.");
 
             var floors = new List<object>();
+            int regionListIndex = -1;
             for (int i = 0; i < editor.floors.Count; i++)
             {
                 object floor = editor.floors[i];
-                if (floor == null) continue;
-                if (ReadBool(floor, "midSpin", false)) continue;
+                if (floor == null || ReadBool(floor, "midSpin", false)) continue;
+                if (ReferenceEquals(floor, requestedStart)) regionListIndex = floors.Count;
                 floors.Add(floor);
             }
-            if (floors.Count < 2)
-                throw new InvalidOperationException("Track '" + slot.Name + "' has fewer than two landable floors after midspin filtering.");
+
+            if (regionListIndex < 0)
+                throw new InvalidOperationException("Track '" + slot.Name + "' region start could not be mapped after midspin filtering.");
+            if (regionListIndex + 1 >= floors.Count)
+                throw new InvalidOperationException("Track '" + slot.Name + "' has no segment after its region start.");
 
             double baseBpm = Convert.ToDouble(editor.levelData.bpm, CultureInfo.InvariantCulture);
             if (!(baseBpm > MinBpm) || double.IsNaN(baseBpm) || double.IsInfinity(baseBpm))
                 throw new InvalidOperationException("Track '" + slot.Name + "' has an invalid base BPM.");
+
+            int actualStartFloor = ReadFloorId(requestedStart, slot.RegionStartFloor);
+            double startHeading = ReadRegionStartHeading(slot, slot.RegionStartFloor);
+            bool inheritedIsCCW = regionListIndex > 0 && ReadBool(floors[regionListIndex - 1], "isCCW", false);
 
             var result = new AnalyzedTrack
             {
@@ -83,17 +106,20 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 PlanetBTag = slot.PlanetBTag.Trim(),
                 InitialPivotIsA = slot.PivotIsA,
                 BaseBpm = baseBpm,
+                RegionStartFloor = actualStartFloor,
+                RegionStartHeading = startHeading,
+                RegionInheritedIsCCW = inheritedIsCCW,
                 StartBeat = 0.0,
                 EndBeat = 0.0,
                 StartSeconds = 0.0,
                 EndSeconds = 0.0
             };
 
-            ValidateUnsupportedFloorState(floors, slot.Name);
+            ValidateUnsupportedFloorState(floors, regionListIndex, slot.Name);
 
             bool pivotIsA = slot.PivotIsA;
             double cursorSeconds = 0.0;
-            for (int i = 0; i + 1 < floors.Count; i++)
+            for (int i = regionListIndex; i + 1 < floors.Count; i++)
             {
                 object startFloor = floors[i];
                 object endFloor = floors[i + 1];
@@ -117,9 +143,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 double durationSeconds = sourceDurationBeats * 60.0 / effectiveBpm;
                 string source = chosen.Source + " + BPM*speed timing";
 
-                // entryTime is the stock runtime's real-time truth. Use it when it is
-                // available and sane; if it differs materially from the simple BPM*speed
-                // calculation, prefer the reconstructed runtime value rather than guessing.
                 double runtimeStartTime;
                 double runtimeEndTime;
                 if (TryReadDouble(startFloor, "entryTime", out runtimeStartTime)
@@ -134,20 +157,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         effectiveBpm = sourceDurationBeats * 60.0 / durationSeconds;
                         source += " + entryTime override";
                     }
-                    else
-                    {
-                        // Keep the exact BPM/speed-derived duration to avoid accumulating
-                        // float noise across long charts, but record that stock timing agreed.
-                        source += " + entryTime check";
-                    }
+                    else source += " + entryTime check";
                 }
-                else
-                {
-                    source += " + terminal-safe fallback";
-                }
+                else source += " + terminal-safe fallback";
 
-                // entryBeat is independent of SetSpeed and remains useful as an angle
-                // consistency check. Synthetic terminal floors may have it unset.
                 double runtimeStartBeat;
                 double runtimeEndBeat;
                 if (TryReadDouble(startFloor, "entryBeat", out runtimeStartBeat)
@@ -198,9 +211,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static double NormalizeToMasterTimeline(IList<AnalyzedTrack> tracks)
         {
-            if (tracks == null || tracks.Count == 0)
-                throw new InvalidOperationException("No analyzed tracks were supplied for timing normalization.");
-
             double masterBpm = double.PositiveInfinity;
             for (int t = 0; t < tracks.Count; t++)
             {
@@ -220,7 +230,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 AnalyzedTrack track = tracks[t];
                 track.StartBeat = track.StartSeconds * masterBpm / 60.0;
                 track.EndBeat = track.EndSeconds * masterBpm / 60.0;
-
                 for (int s = 0; s < track.Segments.Count; s++)
                 {
                     TrackSegment segment = track.Segments[s];
@@ -229,8 +238,81 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     segment.DurationBeats = segment.DurationSeconds * masterBpm / 60.0;
                 }
             }
-
             return masterBpm;
+        }
+
+        private static void ValidateCommonRegionStartAndPrefix(IList<TrackSlot> tracks)
+        {
+            int start = tracks[0].RegionStartFloor;
+            if (start < 0) throw new InvalidOperationException("The Multi Tile region start is invalid.");
+
+            for (int t = 0; t < tracks.Count; t++)
+            {
+                TrackSlot track = tracks[t];
+                if (track.RegionStartFloor != start)
+                    throw new InvalidOperationException("All source tracks must use the same Multi Tile start floor; '" + track.Name + "' uses F" + track.RegionStartFloor + " instead of F" + start + ".");
+                if (track.Data == null || track.Data.angleData == null || track.Data.angleData.Count < start)
+                    throw new InvalidOperationException("Track '" + track.Name + "' does not contain the full shared prefix through F" + start + ".");
+            }
+
+            for (int i = 0; i < start; i++)
+            {
+                double expected = tracks[0].Data.angleData[i];
+                for (int t = 1; t < tracks.Count; t++)
+                {
+                    double actual = tracks[t].Data.angleData[i];
+                    if (!EquivalentPrefixAngle(expected, actual))
+                        throw new InvalidOperationException("Source-track prefixes differ before the Multi Tile region near angleData[" + i + "]. Store/fork tracks from the same prefix.");
+                }
+            }
+        }
+
+        private static void ValidateCommonRegionRuntime(IList<AnalyzedTrack> tracks)
+        {
+            if (tracks.Count == 0) return;
+            AnalyzedTrack expected = tracks[0];
+            for (int i = 1; i < tracks.Count; i++)
+            {
+                AnalyzedTrack actual = tracks[i];
+                if (actual.RegionStartFloor != expected.RegionStartFloor)
+                    throw new InvalidOperationException("Reconstructed region start floors do not match between source tracks.");
+                if (AngularDistance(actual.RegionStartHeading, expected.RegionStartHeading) > PrefixAngleTolerance)
+                    throw new InvalidOperationException("Source-track prefix headings differ at the Multi Tile start.");
+                if (actual.RegionInheritedIsCCW != expected.RegionInheritedIsCCW)
+                    throw new InvalidOperationException("Source-track prefix Twirl state differs at the Multi Tile start.");
+            }
+        }
+
+        private static double ReadRegionStartHeading(TrackSlot slot, int rawFloor)
+        {
+            if (rawFloor <= 0) return 0.0;
+            if (slot.Data == null || slot.Data.angleData == null || rawFloor - 1 >= slot.Data.angleData.Count)
+                throw new InvalidOperationException("Track '" + slot.Name + "' has no prefix heading for F" + rawFloor + ".");
+            double value = slot.Data.angleData[rawFloor - 1];
+            if (Math.Abs(value - 999.0) < 0.001)
+                throw new InvalidOperationException("Track '" + slot.Name + "' starts immediately after a raw midspin marker that v1 cannot use as the master heading.");
+            return NormalizeDegrees(value);
+        }
+
+        private static bool EquivalentPrefixAngle(double a, double b)
+        {
+            bool aMid = Math.Abs(a - 999.0) < 0.001;
+            bool bMid = Math.Abs(b - 999.0) < 0.001;
+            if (aMid || bMid) return aMid && bMid;
+            return AngularDistance(NormalizeDegrees(a), NormalizeDegrees(b)) <= PrefixAngleTolerance;
+        }
+
+        private static double AngularDistance(double a, double b)
+        {
+            double d = Math.Abs(NormalizeDegrees(a) - NormalizeDegrees(b));
+            return Math.Min(d, 360.0 - d);
+        }
+
+        private static double NormalizeDegrees(double value)
+        {
+            value %= 360.0;
+            if (value < 0.0) value += 360.0;
+            return value;
         }
 
         private static void ValidateTags(IList<TrackSlot> tracks)
@@ -248,9 +330,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
         }
 
-        private static void ValidateUnsupportedFloorState(IList<object> floors, string trackName)
+        private static void ValidateUnsupportedFloorState(IList<object> floors, int startIndex, string trackName)
         {
-            for (int i = 0; i < floors.Count; i++)
+            for (int i = startIndex; i < floors.Count; i++)
             {
                 object floor = floors[i];
                 int floorId = ReadFloorId(floor, i);
@@ -281,16 +363,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             };
         }
 
-        private static int ReadFloorId(object floor, int fallback)
-        {
-            return ReadInt(floor, "seqID", fallback);
-        }
-
-        private static double ReadDouble(object target, string name, double fallback)
-        {
-            double value;
-            return TryReadDouble(target, name, out value) ? value : fallback;
-        }
+        private static int ReadFloorId(object floor, int fallback) { return ReadInt(floor, "seqID", fallback); }
+        private static double ReadDouble(object target, string name, double fallback) { double value; return TryReadDouble(target, name, out value) ? value : fallback; }
 
         private static int ReadInt(object target, string name, int fallback)
         {
@@ -346,11 +420,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             internal bool IsCCW;
             internal int FloorId;
             internal string Source;
-
-            internal static AngleCandidate Invalid()
-            {
-                return new AngleCandidate { Valid = false };
-            }
+            internal static AngleCandidate Invalid() { return new AngleCandidate { Valid = false }; }
         }
     }
 }
