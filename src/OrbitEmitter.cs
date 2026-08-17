@@ -30,11 +30,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             int baseTrackIndex)
         {
             if (editor == null || editor.levelData == null) throw new InvalidOperationException("Editor is not ready.");
-            if (plan == null || preview == null) throw new InvalidOperationException("Analyze and verify the master path first.");
+            if (plan == null || preview == null) throw new InvalidOperationException("Analyze and verify the master region first.");
             if (preview.AngleData.Count + 1 != plan.Anchors.Count)
-                throw new InvalidOperationException("Verified master path no longer matches the analyzed plan.");
+                throw new InvalidOperationException("Verified master region no longer matches the analyzed plan.");
 
-            ValidateBasePath(editor, preview, tracks, baseTrackIndex);
+            ValidateBasePath(editor, plan, preview, tracks, baseTrackIndex);
 
             LevelData original = editor.levelData.Copy();
             int selectedFloor = GameAngleProbe.TryGetSelectedFloorIndex(editor);
@@ -42,8 +42,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             OrbitCommitResult result = BuildCandidate(candidate, plan, preview, baseTrackIndex);
 
-            // Preflight the complete candidate through the stock editor before committing.
-            // This is intentionally temporary; failures restore the original chart.
             try
             {
                 TrackStore.RestoreSnapshot(editor, candidate, false);
@@ -58,7 +56,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     editor.SelectFloor(editor.floors[selectedFloor], true);
             }
 
-            // Commit only after every path/event preflight has succeeded.
             try
             {
                 try { editor.SaveState(true, true); } catch { }
@@ -70,38 +67,46 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 throw;
             }
 
-            result.Diagnostic = "Generated master path + " + result.Emitted + " OrbitDecoration action(s). Replaced "
-                + result.Replaced + " previous configured Orbit action(s); remapped " + result.RemappedBaseEvents
-                + " base action(s). Source track snapshots were left unchanged.";
+            result.Diagnostic = "Generated master region from F" + plan.RegionStartFloor + " + " + result.Emitted
+                + " OrbitDecoration action(s). Replaced " + result.Replaced
+                + " previous configured Orbit action(s); remapped " + result.RemappedBaseEvents
+                + " base action(s) inside the region; prefix was preserved. Source snapshots were left unchanged.";
             return result;
         }
 
         private static OrbitCommitResult BuildCandidate(LevelData candidate, GenerationPlan plan, MasterPathPreview preview, int baseTrackIndex)
         {
             candidate.isOldLevel = false;
+            var prefix = new List<float>();
+            if (candidate.angleData == null || candidate.angleData.Count < plan.RegionStartFloor)
+                throw new InvalidOperationException("Active output no longer contains the prefix through F" + plan.RegionStartFloor + ".");
+            for (int i = 0; i < plan.RegionStartFloor; i++) prefix.Add(candidate.angleData[i]);
             candidate.angleData.Clear();
+            for (int i = 0; i < prefix.Count; i++) candidate.angleData.Add(prefix[i]);
             for (int i = 0; i < preview.AngleData.Count; i++) candidate.angleData.Add(NormalizeAngleData(preview.AngleData[i]));
 
             IList events = candidate.levelEvents as IList;
             if (events == null) throw new InvalidOperationException("LevelData.levelEvents is not list-compatible in this game build.");
 
             ValidatePlanetDecorations(candidate, plan);
-
             object template = FindConfiguredOrbitTemplate(events, plan);
             if (template == null)
-            {
-                throw new InvalidOperationException(
-                    "No PACL2 OrbitDecoration template was found for a configured A/B pair. Add one dummy Orbit Decoration to the active output chart using one configured moving/center tag pair, then generate again. The dummy values themselves do not matter; v0.6 overwrites every owned field.");
-            }
+                throw new InvalidOperationException("No configured PACL2 OrbitDecoration template is available after automatic setup.");
 
             int removed = 0;
             int remapped = 0;
+            int outputEndExclusive = plan.RegionStartFloor + plan.Anchors.Count;
+
             for (int i = events.Count - 1; i >= 0; i--)
             {
                 object ev = events[i];
                 if (ev == null) continue;
-                string typeName = GetEventTypeName(ev);
 
+                int floor;
+                if (!TryReadInt(ev, FloorNames, out floor) || floor < 0) continue;
+                if (floor < plan.RegionStartFloor) continue; // prefix is immutable
+
+                string typeName = GetEventTypeName(ev);
                 if (IsOrbitDecoration(typeName) && IsConfiguredOrbitPair(ev, plan))
                 {
                     events.RemoveAt(i);
@@ -109,28 +114,23 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     continue;
                 }
 
-                // Source-path geometry must not be copied onto the synthesized master path.
-                // SetSpeed and ordinary base/VFX actions are retained and remapped below.
                 if (IsSourceGeometryAction(typeName))
                 {
                     events.RemoveAt(i);
                     continue;
                 }
 
-                int floor;
-                if (!TryReadInt(ev, FloorNames, out floor) || floor < 0) continue;
-
                 if (baseTrackIndex >= 0)
                 {
                     if (baseTrackIndex >= plan.Tracks.Count)
                         throw new InvalidOperationException("Active base track index is outside the analyzed plan.");
-                    int anchor = MapSourceFloorToAnchor(plan.Tracks[baseTrackIndex], plan, floor);
-                    SetRequiredValue(ev, FloorNames, anchor);
+                    int outputFloor = MapSourceFloorToOutputFloor(plan.Tracks[baseTrackIndex], plan, floor);
+                    SetRequiredValue(ev, FloorNames, outputFloor);
                     remapped++;
                 }
-                else if (floor >= plan.Anchors.Count)
+                else if (floor >= outputEndExclusive)
                 {
-                    throw new InvalidOperationException("Detached output contains a base action on floor " + floor + ", outside the verified master path.");
+                    throw new InvalidOperationException("Detached output contains a base action on floor " + floor + ", outside the verified master region.");
                 }
             }
 
@@ -139,6 +139,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 var ordered = new List<TrackSegment>(plan.Anchors[a].StartingSegments);
                 ordered.Sort(delegate(TrackSegment x, TrackSegment y) { return x.TrackIndex.CompareTo(y.TrackIndex); });
+                int outputFloor = plan.RegionStartFloor + a;
 
                 for (int s = 0; s < ordered.Count; s++)
                 {
@@ -146,7 +147,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     object clone = CloneEvent(template);
                     if (clone == null) throw new InvalidOperationException("Could not clone the PACL2 OrbitDecoration template.");
 
-                    SetRequiredValue(clone, FloorNames, a);
+                    SetRequiredValue(clone, FloorNames, outputFloor);
                     SetRequiredValue(clone, new[] { "duration" }, segment.DurationBeats);
                     SetRequiredValue(clone, new[] { "tag", "targetTag" }, segment.MovingTag);
                     SetRequiredValue(clone, new[] { "centerTag" }, segment.CenterTag);
@@ -158,7 +159,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     SetRequiredValue(clone, new[] { "eventTag" }, "");
                     TrySetValue(clone, new[] { "active" }, true);
 
-                    VerifyOrbitSemantic(clone, segment, a);
+                    VerifyOrbitSemantic(clone, segment, outputFloor);
                     events.Add(clone);
                     emitted++;
                 }
@@ -169,28 +170,36 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (emitted != expected)
                 throw new InvalidOperationException("Orbit emission count mismatch: expected " + expected + ", built " + emitted + ".");
 
-            return new OrbitCommitResult
-            {
-                Emitted = emitted,
-                Replaced = removed,
-                RemappedBaseEvents = remapped
-            };
+            return new OrbitCommitResult { Emitted = emitted, Replaced = removed, RemappedBaseEvents = remapped };
         }
 
-        private static void ValidateBasePath(scnEditor editor, MasterPathPreview preview, IList<TrackSlot> tracks, int baseTrackIndex)
+        private static void ValidateBasePath(scnEditor editor, GenerationPlan plan, MasterPathPreview preview, IList<TrackSlot> tracks, int baseTrackIndex)
         {
             if (baseTrackIndex >= 0)
             {
                 if (tracks == null || baseTrackIndex >= tracks.Count || tracks[baseTrackIndex].Data == null)
                     throw new InvalidOperationException("The active source track is no longer available.");
                 if (!AngleDataEquivalent(editor.levelData.angleData, tracks[baseTrackIndex].Data.angleData))
-                    throw new InvalidOperationException("The active base path changed after analysis. Re-run Analyze whole-region plan and Verify master path before generating.");
+                    throw new InvalidOperationException("The active base path changed after analysis. Re-run Analyze region plan and Verify master path before generating.");
             }
-            else
+            else if (!GeneratedPathEquivalent(editor.levelData.angleData, plan, preview))
             {
-                if (!AngleDataEquivalent(editor.levelData.angleData, preview.AngleData))
-                    throw new InvalidOperationException("The detached output no longer matches the verified master path. Re-analyze before regenerating.");
+                throw new InvalidOperationException("The detached output no longer matches the verified prefix + master region. Re-analyze before regenerating.");
             }
+        }
+
+        private static bool GeneratedPathEquivalent(IList<float> actual, GenerationPlan plan, MasterPathPreview preview)
+        {
+            if (actual == null || actual.Count != plan.RegionStartFloor + preview.AngleData.Count) return false;
+            for (int i = 0; i < preview.AngleData.Count; i++)
+            {
+                double a = NormalizeComparableAngle(actual[plan.RegionStartFloor + i]);
+                double b = NormalizeComparableAngle(preview.AngleData[i]);
+                double d = Math.Abs(a - b);
+                d = Math.Min(d, 360.0 - d);
+                if (d > AngleDataTolerance) return false;
+            }
+            return true;
         }
 
         private static bool AngleDataEquivalent(IList<float> a, IList<float> b)
@@ -209,29 +218,26 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static double NormalizeComparableAngle(double value)
         {
+            if (Math.Abs(value - 999.0) < AngleDataTolerance) return 999.0;
             value %= 360.0;
             if (value < 0.0) value += 360.0;
             if (Math.Abs(value - 360.0) < AngleDataTolerance || Math.Abs(value) < AngleDataTolerance) return 0.0;
             return value;
         }
 
-        private static float NormalizeAngleData(float value)
-        {
-            double normalized = NormalizeComparableAngle(value);
-            return (float)normalized;
-        }
+        private static float NormalizeAngleData(float value) { return (float)NormalizeComparableAngle(value); }
 
-        private static int MapSourceFloorToAnchor(AnalyzedTrack track, GenerationPlan plan, int sourceFloor)
+        private static int MapSourceFloorToOutputFloor(AnalyzedTrack track, GenerationPlan plan, int sourceFloor)
         {
             for (int i = 0; i < track.SourceFloors.Count; i++)
             {
                 SourceFloorPoint point = track.SourceFloors[i];
                 if (point.Floor != sourceFloor) continue;
                 int anchor = TimelineMerger.FindAnchorIndex(plan.Anchors, point.Beat);
-                if (anchor >= 0) return anchor;
+                if (anchor >= 0) return plan.RegionStartFloor + anchor;
                 break;
             }
-            throw new InvalidOperationException("Base action on source floor " + sourceFloor + " cannot be mapped to a master anchor in track '" + track.Name + "'.");
+            throw new InvalidOperationException("Base action on source floor " + sourceFloor + " cannot be mapped inside the master region for track '" + track.Name + "'.");
         }
 
         private static void ValidatePlanetDecorations(LevelData levelData, GenerationPlan plan)
@@ -242,16 +248,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 counts[plan.Tracks[t].PlanetATag] = 0;
                 counts[plan.Tracks[t].PlanetBTag] = 0;
             }
-
             CountAddObjects(levelData.levelEvents as IList, counts);
             CountAddObjects(levelData.decorations as IList, counts);
-
             foreach (KeyValuePair<string, int> pair in counts)
             {
-                if (pair.Value == 0)
-                    throw new InvalidOperationException("Missing initial PACL2 AddObject planet decoration for tag '" + pair.Key + "'. Add the two planet objects for every configured group to the active output chart before generating.");
-                if (pair.Value > 1)
-                    throw new InvalidOperationException("Expected exactly one initial PACL2 AddObject for tag '" + pair.Key + "', but found " + pair.Value + ".");
+                if (pair.Value == 0) throw new InvalidOperationException("Missing PACL2 AddObject planet decoration for tag '" + pair.Key + "'.");
+                if (pair.Value > 1) throw new InvalidOperationException("Expected exactly one PACL2 AddObject for tag '" + pair.Key + "', but found " + pair.Value + ".");
             }
         }
 
@@ -275,9 +277,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             for (int i = events.Count - 1; i >= 0; i--)
             {
                 object ev = events[i];
-                if (ev == null) continue;
-                if (!IsOrbitDecoration(GetEventTypeName(ev))) continue;
-                if (IsConfiguredOrbitPair(ev, plan)) return ev;
+                if (ev != null && IsOrbitDecoration(GetEventTypeName(ev)) && IsConfiguredOrbitPair(ev, plan)) return ev;
             }
             return null;
         }
@@ -317,10 +317,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             object info = ReadMember(ev, "info");
             string infoName = Convert.ToString(ReadMember(info, "name"), CultureInfo.InvariantCulture) ?? "";
-            if (!string.IsNullOrWhiteSpace(infoName) && !string.Equals(infoName, "None", StringComparison.OrdinalIgnoreCase))
-                return infoName;
-            object raw = ReadValue(ev, EventTypeNames);
-            return Convert.ToString(raw, CultureInfo.InvariantCulture) ?? "";
+            if (!string.IsNullOrWhiteSpace(infoName) && !string.Equals(infoName, "None", StringComparison.OrdinalIgnoreCase)) return infoName;
+            return Convert.ToString(ReadValue(ev, EventTypeNames), CultureInfo.InvariantCulture) ?? "";
         }
 
         private static void VerifyOrbitSemantic(object ev, TrackSegment segment, int floor)
@@ -328,12 +326,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             int actualFloor;
             if (!TryReadInt(ev, FloorNames, out actualFloor) || actualFloor != floor)
                 throw new InvalidOperationException("Orbit template clone did not retain the requested output floor.");
-
             string moving = Convert.ToString(ReadValue(ev, new[] { "tag", "targetTag" }), CultureInfo.InvariantCulture) ?? "";
             string center = Convert.ToString(ReadValue(ev, new[] { "centerTag" }), CultureInfo.InvariantCulture) ?? "";
             if (moving.Trim() != segment.MovingTag || center.Trim() != segment.CenterTag)
                 throw new InvalidOperationException("Orbit template clone did not retain the requested moving/center tags.");
-
             double amount;
             double duration;
             if (!TryReadDouble(ev, new[] { "amount" }, out amount) || Math.Abs(amount - segment.AmountDegrees) > 0.001)
@@ -352,14 +348,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 R.MethodInfo m = type.GetMethod(methods[i], flags, null, Type.EmptyTypes, null);
                 if (m == null) continue;
-                try
-                {
-                    object result = m.Invoke(source, null);
-                    if (result != null) return result;
-                }
-                catch { }
+                try { object result = m.Invoke(source, null); if (result != null) return result; } catch { }
             }
-
             R.MethodInfo memberwise = typeof(object).GetMethod("MemberwiseClone", R.BindingFlags.Instance | R.BindingFlags.NonPublic);
             object clone = memberwise.Invoke(source, null);
             CloneDictionaryMember(source, clone, "data");
@@ -390,9 +380,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 object value = ReadMember(target, names[i]);
                 if (value != null) return value;
-                value = ReadIndexer(target, names[i]);
-                if (value != null) return value;
                 value = ReadPropertyBag(target, names[i]);
+                if (value != null) return value;
+                value = ReadIndexer(target, names[i]);
                 if (value != null) return value;
             }
             return null;
@@ -403,7 +393,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             for (int i = 0; i < names.Length; i++)
             {
                 string name = names[i];
-                if (SetMember(target, name, value) || SetIndexer(target, name, value) || SetPropertyBag(target, name, value))
+                if (SetMember(target, name, value) || SetPropertyBag(target, name, value) || SetIndexer(target, name, value))
                 {
                     MarkPropertyEnabled(target, name);
                     return;
@@ -417,7 +407,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             for (int i = 0; i < names.Length; i++)
             {
                 string name = names[i];
-                if (SetMember(target, name, value) || SetIndexer(target, name, value) || SetPropertyBag(target, name, value))
+                if (SetMember(target, name, value) || SetPropertyBag(target, name, value) || SetIndexer(target, name, value))
                 {
                     MarkPropertyEnabled(target, name);
                     return true;
@@ -438,18 +428,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (target == null) return null;
             Type type = target.GetType();
             const R.BindingFlags flags = R.BindingFlags.Instance | R.BindingFlags.Public | R.BindingFlags.NonPublic;
-            try
-            {
-                R.PropertyInfo p = type.GetProperty(name, flags);
-                if (p != null && p.GetIndexParameters().Length == 0) return p.GetValue(target, null);
-            }
-            catch { }
-            try
-            {
-                R.FieldInfo f = type.GetField(name, flags);
-                if (f != null) return f.GetValue(target);
-            }
-            catch { }
+            try { R.PropertyInfo p = type.GetProperty(name, flags); if (p != null && p.GetIndexParameters().Length == 0) return p.GetValue(target, null); } catch { }
+            try { R.FieldInfo f = type.GetField(name, flags); if (f != null) return f.GetValue(target); } catch { }
             return null;
         }
 
@@ -461,23 +441,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             try
             {
                 R.PropertyInfo p = type.GetProperty(name, flags);
-                if (p != null && p.CanWrite && p.GetIndexParameters().Length == 0)
-                {
-                    p.SetValue(target, ConvertFor(value, p.PropertyType), null);
-                    return true;
-                }
+                if (p != null && p.CanWrite && p.GetIndexParameters().Length == 0) { p.SetValue(target, ConvertFor(value, p.PropertyType), null); return true; }
             }
             catch { }
-            try
-            {
-                R.FieldInfo f = type.GetField(name, flags);
-                if (f != null)
-                {
-                    f.SetValue(target, ConvertFor(value, f.FieldType));
-                    return true;
-                }
-            }
-            catch { }
+            try { R.FieldInfo f = type.GetField(name, flags); if (f != null) { f.SetValue(target, ConvertFor(value, f.FieldType)); return true; } } catch { }
             return false;
         }
 
@@ -504,12 +471,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 R.ParameterInfo[] pars = p.GetIndexParameters();
                 if (pars.Length != 1 || pars[0].ParameterType != typeof(string) || !p.CanWrite) continue;
-                try
-                {
-                    p.SetValue(target, ConvertFor(value, p.PropertyType), new object[] { key });
-                    return true;
-                }
-                catch { }
+                try { p.SetValue(target, ConvertFor(value, p.PropertyType), new object[] { key }); return true; } catch { }
             }
             return false;
         }
@@ -519,8 +481,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             for (int i = 0; i < DataBagNames.Length; i++)
             {
                 IDictionary dict = ReadMember(target, DataBagNames[i]) as IDictionary;
-                if (dict == null || !dict.Contains(key)) continue;
-                return dict[key];
+                if (dict != null && dict.Contains(key)) return dict[key];
             }
             return null;
         }
@@ -545,12 +506,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static bool TryReadInt(object target, string[] names, out int result)
         {
             object value = ReadValue(target, names);
-            try
-            {
-                if (value == null) { result = 0; return false; }
-                result = Convert.ToInt32(value, CultureInfo.InvariantCulture);
-                return true;
-            }
+            try { if (value == null) { result = 0; return false; } result = Convert.ToInt32(value, CultureInfo.InvariantCulture); return true; }
             catch { result = 0; return false; }
         }
 
