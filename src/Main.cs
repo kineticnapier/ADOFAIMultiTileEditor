@@ -13,7 +13,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static Vector2 trackScroll;
         private static Vector2 planScroll;
         private static scnEditor lastEditor;
-        private static string status = "Open a level in the editor, then store each source chart as a track.";
+        private static string status = "Select the floor where Multi Tile should begin, then store each source chart as a track.";
         private static GenerationPlan lastPlan;
         private static MasterPathPreview lastPathPreview;
 
@@ -23,7 +23,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             entry.OnToggle = OnToggle;
             entry.OnGUI = OnGUI;
             entry.OnUpdate = OnUpdate;
-            logger.Log("ADOFAI Multi Tile Editor Prototype v0.8.0 loaded.");
+            logger.Log("ADOFAI Multi Tile Editor Prototype v0.9.0 loaded.");
             return true;
         }
 
@@ -50,7 +50,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static void OnGUI(UnityModManager.ModEntry entry)
         {
-            GUILayout.Label("Multi Tile Editor prototype v0.8.0 - automatic PACL2 output + tile previews");
+            GUILayout.Label("Multi Tile Editor prototype v0.9.0 - preserved prefix + region-only generation");
             scnEditor editor = ADOBase.editor;
             if (editor == null)
             {
@@ -58,7 +58,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 return;
             }
 
-            GUILayout.Label("Pipeline: source TrackAnalyzer -> real-time timeline union -> verified constant-BPM master path -> automatic PACL2 planets/orbits -> source Floor decorations -> commit.");
+            GUILayout.Label("The floor selected when a track is first stored becomes that track's fixed Multi Tile start. The prefix before it is preserved exactly; only the suffix region is analyzed/replaced.");
             GUILayout.Space(6f);
 
             GUILayout.BeginHorizontal();
@@ -71,7 +71,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     int index = store.StoreCurrent(editor, newTrackName);
                     newTrackName = "";
                     InvalidatePlan();
-                    status = "Stored current chart as track #" + (index + 1) + ".";
+                    status = "Stored current chart as track #" + (index + 1) + " with Multi Tile start F" + store.Tracks[index].RegionStartFloor + ".";
                 });
             }
             GUI.enabled = store.ActiveIndex >= 0;
@@ -81,7 +81,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 {
                     store.SaveActive(editor);
                     InvalidatePlan();
-                    status = "Saved active source-track snapshot.";
+                    status = "Saved active source snapshot; its fixed region start was preserved.";
                 });
             }
             GUI.enabled = true;
@@ -89,7 +89,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             string editorBinding = store.ActiveIndex >= 0 ? ("source track #" + (store.ActiveIndex + 1)) : "detached output/base";
             GUILayout.Label("Tracks: " + store.Tracks.Count + "    editor binding: " + editorBinding);
-            trackScroll = GUILayout.BeginScrollView(trackScroll, GUILayout.Height(Math.Min(360f, 52f + store.Tracks.Count * 64f)));
+            trackScroll = GUILayout.BeginScrollView(trackScroll, GUILayout.Height(Math.Min(420f, 52f + store.Tracks.Count * 86f)));
             for (int i = 0; i < store.Tracks.Count; i++)
             {
                 TrackSlot track = store.Tracks[i];
@@ -97,7 +97,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 GUILayout.Label(i == store.ActiveIndex ? "▶" : " ", GUILayout.Width(18f));
                 track.Name = GUILayout.TextField(track.Name ?? ("Track " + (i + 1)), GUILayout.Width(125f));
                 GUILayout.Label(track.Data != null && track.Data.angleData != null ? (track.Data.angleData.Count + " angles") : "empty", GUILayout.Width(82f));
-                GUILayout.Label("F" + track.CursorFloor, GUILayout.Width(44f));
+                GUILayout.Label("cursor F" + track.CursorFloor, GUILayout.Width(72f));
+                GUILayout.Label("start F" + track.RegionStartFloor, GUILayout.Width(68f));
                 AngleSample angle = track.CurrentAngle;
                 GUILayout.Label(angle.Valid ? (angle.Degrees.ToString("0.###") + "°") : "?", GUILayout.Width(72f));
 
@@ -152,6 +153,18 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     track.PivotIsA = !track.PivotIsA;
                     InvalidatePlan();
                 }
+
+                GUI.enabled = i == store.ActiveIndex;
+                if (GUILayout.Button("start = selected", GUILayout.Width(112f)))
+                {
+                    Try(delegate
+                    {
+                        store.SetActiveRegionStartFromSelection(editor);
+                        InvalidatePlan();
+                        status = "Set " + track.Name + " Multi Tile start to F" + track.RegionStartFloor + ".";
+                    });
+                }
+                GUI.enabled = true;
                 GUILayout.EndHorizontal();
             }
             GUILayout.EndScrollView();
@@ -159,7 +172,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             GUILayout.Space(6f);
             GUILayout.BeginHorizontal();
             GUI.enabled = store.ActiveIndex >= 0;
-            if (GUILayout.Button("Analyze whole-region plan", GUILayout.Width(210f)))
+            if (GUILayout.Button("Analyze region plan", GUILayout.Width(190f)))
             {
                 Try(delegate
                 {
@@ -187,34 +200,31 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 {
                     int baseTrackIndex = store.ActiveIndex;
                     OrbitCommitResult orbitResult = MasterOutputGenerator.GenerateAndCommit(editor, lastPlan, lastPathPreview, store.Tracks, baseTrackIndex);
-                    TileDecorationResult tileResult = FixedTileDecorationGenerator.GenerateAndCommit(editor, store.Tracks);
+                    TileDecorationResult tileResult = FixedTileDecorationGenerator.GenerateAndCommit(editor, store.Tracks, lastPlan);
                     store.DetachActive();
                     status = orbitResult.Diagnostic + " " + tileResult.Diagnostic + " Editor is now detached from source snapshots.";
                 });
             }
 
             GUI.enabled = lastPlan != null;
-            if (GUILayout.Button("Clear plan", GUILayout.Width(90f)))
-            {
-                InvalidatePlan();
-            }
+            if (GUILayout.Button("Clear plan", GUILayout.Width(90f))) InvalidatePlan();
             GUI.enabled = true;
             GUILayout.EndHorizontal();
 
-            GUILayout.Label("Source tracks may now use different SetSpeed maps: analysis merges reconstructed real time and generates one constant-BPM master output. Pause/Hold/FreeRoam/MultiPlanet remain unsupported.");
+            GUILayout.Label("Different SetSpeed maps are merged by region-relative real time. Timing normalization is inserted at the region start, never at F0. Pause/Hold/FreeRoam/MultiPlanet remain unsupported.");
 
             if (lastPlan != null) DrawPlan(lastPlan);
             if (lastPathPreview != null) DrawMasterPathPreview(lastPlan, lastPathPreview);
 
             GUILayout.Space(4f);
             GUILayout.Label(status);
-            GUILayout.Label("Floor previews separate geometric tile shape from gameplay/Twirl rhythm, normalize runtime positions by tileSize, and share the same origin/initial phase as auto-created planets.");
+            GUILayout.Label("Planet setup and source Floor previews are also anchored to the region start; the common prefix is not converted into Multi Tile data.");
         }
 
         private static void DrawPlan(GenerationPlan plan)
         {
             GUILayout.Space(6f);
-            GUILayout.Label("Plan summary: " + plan.Tracks.Count + " tracks, " + plan.Anchors.Count + " anchors, "
+            GUILayout.Label("Plan summary: start F" + plan.RegionStartFloor + ", " + plan.Tracks.Count + " tracks, " + plan.Anchors.Count + " anchors, "
                 + (plan.EndBeat - plan.StartBeat).ToString("0.######") + " master beats / "
                 + (plan.EndSeconds - plan.StartSeconds).ToString("0.######") + " sec @ "
                 + plan.MasterBpm.ToString("0.######") + " BPM. Timeline epsilon=" + TimelineMerger.BeatEpsilon.ToString("0.0e+0"));
@@ -223,7 +233,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             for (int t = 0; t < plan.Tracks.Count; t++)
             {
                 AnalyzedTrack track = plan.Tracks[t];
-                GUILayout.Label(track.Name + ": " + track.Segments.Count + " segments, "
+                GUILayout.Label(track.Name + ": start F" + track.RegionStartFloor + ", " + track.Segments.Count + " segments, "
                     + track.StartBeat.ToString("0.######") + " -> " + track.EndBeat.ToString("0.######") + " master beats; base BPM="
                     + track.BaseBpm.ToString("0.######"));
                 int shown = Math.Min(track.Segments.Count, 16);
@@ -240,13 +250,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (track.Segments.Count > shown) GUILayout.Label("  ... " + (track.Segments.Count - shown) + " more segment(s)");
             }
 
-            GUILayout.Label("Master anchors (relative beats):");
+            GUILayout.Label("Master anchors (region-relative beats):");
             int anchorShown = Math.Min(plan.Anchors.Count, 40);
             for (int i = 0; i < anchorShown; i++)
             {
                 MasterAnchor anchor = plan.Anchors[i];
-                GUILayout.Label("  M" + i + " = " + (anchor.Beat - plan.StartBeat).ToString("0.######")
-                    + "    starts " + anchor.StartingSegments.Count + " orbit(s)");
+                GUILayout.Label("  M" + i + " -> output F" + (plan.RegionStartFloor + i) + " = "
+                    + (anchor.Beat - plan.StartBeat).ToString("0.######") + "    starts " + anchor.StartingSegments.Count + " orbit(s)");
             }
             if (plan.Anchors.Count > anchorShown) GUILayout.Label("  ... " + (plan.Anchors.Count - anchorShown) + " more anchor(s)");
             GUILayout.EndScrollView();
@@ -255,16 +265,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static void DrawMasterPathPreview(GenerationPlan plan, MasterPathPreview preview)
         {
             GUILayout.Space(6f);
-            GUILayout.Label("Master path verification: " + preview.AngleData.Count + " angleData value(s), "
-                + preview.RuntimeFloorCount + " runtime anchor floor(s), max angle error="
+            GUILayout.Label("Master region verification: prefix -> F" + plan.RegionStartFloor + ", " + preview.AngleData.Count + " synthesized angleData value(s), "
+                + preview.RuntimeFloorCount + " region anchor floor(s), max angle error="
                 + preview.MaxAngleErrorDegrees.ToString("0.######") + "°, max beat error=" + preview.MaxBeatError.ToString("0.0e+0"));
 
             int shown = Math.Min(preview.AngleData.Count, 32);
             for (int i = 0; i < shown; i++)
             {
                 double travel = (plan.Anchors[i + 1].Beat - plan.Anchors[i].Beat) * 180.0;
-                GUILayout.Label("  A" + i + " heading=" + preview.AngleData[i].ToString("0.######")
-                    + "°    travel=" + travel.ToString("0.######") + "°    M" + i + " -> M" + (i + 1));
+                GUILayout.Label("  A" + i + " output heading=" + preview.AngleData[i].ToString("0.######")
+                    + "°    travel=" + travel.ToString("0.######") + "°    F" + (plan.RegionStartFloor + i) + " -> F" + (plan.RegionStartFloor + i + 1));
             }
             if (preview.AngleData.Count > shown)
                 GUILayout.Label("  ... " + (preview.AngleData.Count - shown) + " more angleData value(s)");
