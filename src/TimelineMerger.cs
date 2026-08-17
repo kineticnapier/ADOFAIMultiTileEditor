@@ -13,13 +13,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 throw new InvalidOperationException("No analyzed tracks were supplied.");
 
             double commonStart = tracks[0].StartBeat;
-            double commonEnd = tracks[0].EndBeat;
+            double maxEnd = tracks[0].EndBeat;
             for (int i = 1; i < tracks.Count; i++)
             {
                 if (!NearlyEqual(tracks[i].StartBeat, commonStart))
                     throw new InvalidOperationException("Track start times do not match within timeline epsilon.");
-                if (!NearlyEqual(tracks[i].EndBeat, commonEnd))
-                    throw new InvalidOperationException("Track end times do not match within timeline epsilon.");
+                if (tracks[i].EndBeat > maxEnd) maxEnd = tracks[i].EndBeat;
             }
 
             var allTimes = new List<double>();
@@ -62,7 +61,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             var plan = new GenerationPlan
             {
                 StartBeat = commonStart,
-                EndBeat = commonEnd
+                EndBeat = maxEnd
             };
             for (int i = 0; i < tracks.Count; i++) plan.Tracks.Add(tracks[i]);
             for (int i = 0; i < canonicalTimes.Count; i++)
@@ -85,7 +84,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             plan.Diagnostic = "Plan OK: " + plan.Tracks.Count + " track(s), "
                 + CountSegments(plan.Tracks) + " segment(s), " + plan.Anchors.Count
-                + " master anchor(s), duration " + (plan.EndBeat - plan.StartBeat).ToString("0.######") + " beats.";
+                + " master anchor(s), duration " + (plan.EndBeat - plan.StartBeat).ToString("0.######")
+                + " beats (tracks may end independently).";
             return plan;
         }
 
