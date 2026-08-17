@@ -104,7 +104,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 return "Preview finish: added " + starterTiles + " separate 180° starter tile(s), "
                     + endTiles + " 180° Portal end tile(s), reflected " + iconTiles
                     + " source tile icon(s), Twirl colors red/blue=" + redTwirlIcons + "/" + blueTwirlIcons
-                    + ", pre-rolled " + preRollGroups + " planet group(s) on the last prefix interval.";
+                    + ", pre-rolled " + preRollGroups + " planet group(s) at region-start angular speed.";
             }
             finally
             {
@@ -382,24 +382,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (editor.floors == null || plan.RegionStartFloor >= editor.floors.Count)
                 return 0;
 
-            int previousFloorIndex = plan.RegionStartFloor - 1;
-            while (previousFloorIndex >= 0)
-            {
-                scrFloor floor = editor.floors[previousFloorIndex];
-                if (floor != null && !floor.midSpin) break;
-                previousFloorIndex--;
-            }
-            if (previousFloorIndex < 0) return 0;
-
-            scrFloor startFloor = editor.floors[plan.RegionStartFloor];
-            scrFloor previousFloor = editor.floors[previousFloorIndex];
-            if (startFloor == null || previousFloor == null) return 0;
-
-            double previousTravel = Math.Abs(ReadDouble(previousFloor, "angleLength", 0.0) * Mathf.Rad2Deg);
-            if (!(previousTravel > 0.000001)) return 0;
-            double durationBeats = previousTravel / 180.0;
-            double amount = ReadBool(previousFloor, "isCCW", false) ? 360.0 : -360.0;
-
             IList decorations = candidate.decorations as IList;
             IList levelEvents = candidate.levelEvents as IList;
             if (decorations == null || levelEvents == null) return 0;
@@ -407,29 +389,39 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             LevelEvent orbitTemplate = FindOrbitTemplate(levelEvents);
             if (orbitTemplate == null) return 0;
 
-            float tileSize = ResolveTileSize();
-            Vector2 anchorDelta = ToLevelPosition(startFloor, tileSize)
-                - ToLevelPosition(previousFloor, tileSize);
             int applied = 0;
-
             for (int i = 0; i < plan.Tracks.Count; i++)
             {
                 AnalyzedTrack track = plan.Tracks[i];
-                LevelEvent planetA = FindPlanet(candidate, track.PlanetATag);
-                LevelEvent planetB = FindPlanet(candidate, track.PlanetBTag);
-                if (!CanPreRollPlanet(planetA, plan.RegionStartFloor, previousFloorIndex)
-                    || !CanPreRollPlanet(planetB, plan.RegionStartFloor, previousFloorIndex))
+                int preRollFloorIndex;
+                double durationBeats;
+                double angleOffsetDegrees;
+                double amount;
+                if (!TryResolvePreRollWindow(
+                    editor,
+                    plan.RegionStartFloor,
+                    track,
+                    out preRollFloorIndex,
+                    out durationBeats,
+                    out angleOffsetDegrees,
+                    out amount))
                     continue;
 
-                ShiftPlanetToPreviousFloor(planetA, plan.RegionStartFloor, previousFloorIndex, anchorDelta);
-                ShiftPlanetToPreviousFloor(planetB, plan.RegionStartFloor, previousFloorIndex, anchorDelta);
+                LevelEvent planetA = FindPlanet(candidate, track.PlanetATag);
+                LevelEvent planetB = FindPlanet(candidate, track.PlanetBTag);
+                if (!CanPreRollPlanet(planetA, plan.RegionStartFloor, preRollFloorIndex)
+                    || !CanPreRollPlanet(planetB, plan.RegionStartFloor, preRollFloorIndex))
+                    continue;
+
+                ShiftPlanetToFloor(editor, planetA, preRollFloorIndex);
+                ShiftPlanetToFloor(editor, planetB, preRollFloorIndex);
 
                 string movingTag = track.InitialPivotIsA ? track.PlanetBTag : track.PlanetATag;
                 string centerTag = track.InitialPivotIsA ? track.PlanetATag : track.PlanetBTag;
                 LevelEvent orbit = orbitTemplate.Copy();
                 if (orbit == null) continue;
 
-                SetEventFloor(orbit, previousFloorIndex);
+                SetEventFloor(orbit, preRollFloorIndex);
                 SetTypedData(orbit, "duration", durationBeats);
                 SetTypedData(orbit, "tag", movingTag);
                 SetTypedData(orbit, "centerTag", centerTag);
@@ -437,7 +429,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 SetTypedData(orbit, "lockRotation", false);
                 SetTypedData(orbit, "dstRadiusMultiplier", 1.0);
                 SetTypedData(orbit, "ease", "Linear");
-                SetTypedData(orbit, "angleOffset", 0.0);
+                SetTypedData(orbit, "angleOffset", angleOffsetDegrees);
                 SetTypedData(orbit, "eventTag", PreRollTag);
                 SetOptionalTypedData(orbit, "active", true);
                 levelEvents.Add(orbit);
@@ -446,29 +438,127 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             return applied;
         }
 
-        private static bool CanPreRollPlanet(LevelEvent planet, int startFloor, int previousFloor)
+        private static bool TryResolvePreRollWindow(
+            scnEditor editor,
+            int regionStartFloor,
+            AnalyzedTrack track,
+            out int preRollFloorIndex,
+            out double durationBeats,
+            out double angleOffsetDegrees,
+            out double amount)
+        {
+            preRollFloorIndex = -1;
+            durationBeats = 0.0;
+            angleOffsetDegrees = 0.0;
+            amount = 0.0;
+
+            if (editor == null || editor.levelData == null || editor.floors == null
+                || track == null || track.Segments.Count == 0)
+                return false;
+
+            TrackSegment first = track.Segments[0];
+            double firstMagnitude = Math.Abs(first.AmountDegrees);
+            if (!(firstMagnitude > 0.000001) || !(first.DurationSeconds > 0.000001))
+                return false;
+
+            int previousFloorIndex = FindPreviousLandableFloorIndex(editor, regionStartFloor - 1);
+            if (previousFloorIndex < 0) return false;
+            scrFloor previousFloor = editor.floors[previousFloorIndex];
+            if (previousFloor == null) return false;
+
+            double baseBpm;
+            try { baseBpm = Convert.ToDouble(editor.levelData.bpm, CultureInfo.InvariantCulture); }
+            catch { return false; }
+            double prefixSpeed = ReadDouble(previousFloor, "speed", 1.0);
+            double prefixBpm = baseBpm * prefixSpeed;
+            if (!(prefixBpm > 0.000001) || double.IsNaN(prefixBpm) || double.IsInfinity(prefixBpm))
+                return false;
+
+            // Match the first generated Orbit's physical angular velocity. A full 360°
+            // therefore starts early enough to finish exactly at the Multi Tile boundary.
+            double fullTurnSeconds = 360.0 * first.DurationSeconds / firstMagnitude;
+            durationBeats = fullTurnSeconds * prefixBpm / 60.0;
+            if (!(durationBeats > 0.000001) || double.IsNaN(durationBeats) || double.IsInfinity(durationBeats))
+                return false;
+
+            double cumulativeBeats = 0.0;
+            int cursor = previousFloorIndex;
+            while (cursor >= 0)
+            {
+                scrFloor floor = editor.floors[cursor];
+                if (floor == null || floor.midSpin)
+                {
+                    cursor = FindPreviousLandableFloorIndex(editor, cursor - 1);
+                    continue;
+                }
+
+                double speed = ReadDouble(floor, "speed", 1.0);
+                if (Math.Abs(speed - prefixSpeed) > SpeedEpsilon)
+                    break; // Keep the pre-roll in one constant-speed prefix section.
+
+                double travelDegrees = Math.Abs(ReadDouble(floor, "angleLength", 0.0) * Mathf.Rad2Deg);
+                double floorBeats = travelDegrees / 180.0;
+                if (floorBeats > 0.000001)
+                {
+                    cumulativeBeats += floorBeats;
+                    if (cumulativeBeats + 1.0e-7 >= durationBeats)
+                    {
+                        preRollFloorIndex = cursor;
+                        double delayBeats = Math.Max(0.0, cumulativeBeats - durationBeats);
+                        angleOffsetDegrees = delayBeats * 180.0;
+                        amount = first.AmountDegrees >= 0.0 ? 360.0 : -360.0;
+                        return true;
+                    }
+                }
+
+                cursor = FindPreviousLandableFloorIndex(editor, cursor - 1);
+            }
+            return false;
+        }
+
+        private static int FindPreviousLandableFloorIndex(scnEditor editor, int fromIndex)
+        {
+            if (editor == null || editor.floors == null) return -1;
+            int i = Math.Min(fromIndex, editor.floors.Count - 1);
+            for (; i >= 0; i--)
+            {
+                scrFloor floor = editor.floors[i];
+                if (floor != null && !floor.midSpin) return i;
+            }
+            return -1;
+        }
+
+        private static bool CanPreRollPlanet(LevelEvent planet, int startFloor, int preRollFloor)
         {
             if (planet == null) return false;
             string relativeTo = Convert.ToString(SafeGetData(planet, "relativeTo"), CultureInfo.InvariantCulture) ?? "";
             if (!string.Equals(relativeTo, "Tile", StringComparison.OrdinalIgnoreCase)) return false;
             int floor;
             if (!TryReadEventFloor(planet, out floor)) return false;
-            if (floor != startFloor && floor != previousFloor) return false;
+            if (floor < preRollFloor || floor > startFloor) return false;
             object position = SafeGetData(planet, "position");
             return position is Vector2 || position is Vector3;
         }
 
-        private static void ShiftPlanetToPreviousFloor(
-            LevelEvent planet,
-            int startFloor,
-            int previousFloor,
-            Vector2 anchorDelta)
+        private static void ShiftPlanetToFloor(scnEditor editor, LevelEvent planet, int targetFloor)
         {
-            int floor;
-            if (!TryReadEventFloor(planet, out floor) || floor != startFloor) return;
+            if (editor == null || editor.floors == null || planet == null) return;
+            int currentFloor;
+            if (!TryReadEventFloor(planet, out currentFloor) || currentFloor == targetFloor) return;
+            if (currentFloor < 0 || currentFloor >= editor.floors.Count
+                || targetFloor < 0 || targetFloor >= editor.floors.Count)
+                return;
+
+            scrFloor currentAnchor = editor.floors[currentFloor];
+            scrFloor targetAnchor = editor.floors[targetFloor];
+            if (currentAnchor == null || targetAnchor == null) return;
+
+            float tileSize = ResolveTileSize();
+            Vector2 anchorDelta = ToLevelPosition(currentAnchor, tileSize)
+                - ToLevelPosition(targetAnchor, tileSize);
             Vector2 position = ReadVector2Data(planet, "position", Vector2.zero);
             SetTypedData(planet, "position", position + anchorDelta);
-            SetEventFloor(planet, previousFloor);
+            SetEventFloor(planet, targetFloor);
         }
 
         private static LevelEvent FindPlanet(LevelData levelData, string requestedTag)
