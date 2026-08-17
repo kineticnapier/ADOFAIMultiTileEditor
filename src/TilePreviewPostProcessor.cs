@@ -12,6 +12,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
     {
         private const string OwnerTag = "adofaiMTEGenerated";
         private const string StarterTag = "adofaiMTEStarter";
+        private const string EndTag = "adofaiMTEEnd";
+        private const string PreRollTag = "adofaiMTEPreroll";
         private const double SpeedEpsilon = 1.0e-5;
 
         internal static string ApplyAndCommit(scnEditor editor, IList<TrackSlot> tracks, GenerationPlan plan)
@@ -27,34 +29,35 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             LevelData candidate = output.Copy();
 
             int starterTiles = 0;
+            int endTiles = 0;
             int iconTiles = 0;
             int redTwirlIcons = 0;
             int blueTwirlIcons = 0;
             IList decorations = candidate.decorations as IList;
+            IList levelEvents = candidate.levelEvents as IList;
             if (decorations == null)
                 throw new InvalidOperationException("LevelData.decorations is not list-compatible in this game build.");
+            if (levelEvents == null)
+                throw new InvalidOperationException("LevelData.levelEvents is not list-compatible in this game build.");
 
-            RemoveOwnedStarterTiles(decorations);
+            RemoveOwnedExtraTiles(decorations);
+            RemoveOwnedPreRollOrbits(levelEvents);
 
             for (int t = 0; t < sourceTracks.Count; t++)
             {
                 SourcePreviewTrack source = sourceTracks[t];
                 LevelEvent firstOwnedPreview = FindOwnedPreview(decorations, source.TrackIndex, 0);
 
-                // A mid-chart Multi Tile start needs one extra straight tile on the
-                // incoming side. Do not mutate the real start tile: it keeps its source
-                // corner/straight shape and source icon.
                 if (source.HasStarterTile && firstOwnedPreview != null)
                 {
-                    LevelEvent starter = CreateStarterTile(firstOwnedPreview, source);
-                    decorations.Add(starter);
+                    decorations.Add(CreateStarterTile(firstOwnedPreview, source));
                     starterTiles++;
                 }
 
                 for (int i = 0; i < source.Tiles.Count; i++)
                 {
                     LevelEvent preview = FindOwnedPreview(decorations, source.TrackIndex, i);
-                    if (preview == null) continue; // manual/EQOL preview was intentionally preserved
+                    if (preview == null) continue;
 
                     SourcePreviewTile tile = source.Tiles[i];
                     if (!TrySetTypedData(preview, "trackIcon", tile.TrackIcon))
@@ -79,17 +82,29 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         else blueTwirlIcons++;
                     }
                 }
+
+                if (source.HasEndTile && firstOwnedPreview != null && source.Tiles.Count > 0)
+                {
+                    LevelEvent lastOwnedPreview = FindOwnedPreview(
+                        decorations, source.TrackIndex, source.Tiles.Count - 1) ?? firstOwnedPreview;
+                    decorations.Add(CreateEndTile(firstOwnedPreview, lastOwnedPreview, source));
+                    endTiles++;
+                }
             }
+
+            int preRollGroups = ApplyPlanetPreRoll(editor, candidate, plan);
 
             bool committed = false;
             try
             {
                 TrackStore.RestoreSnapshot(editor, candidate, true);
+                editor.ApplyEventsToFloors();
                 editor.UpdateDecorationObjects();
                 committed = true;
-                return "Preview finish: added " + starterTiles + " separate 180° starter tile(s), reflected "
-                    + iconTiles + " source tile icon(s), Twirl colors red/blue="
-                    + redTwirlIcons + "/" + blueTwirlIcons + ".";
+                return "Preview finish: added " + starterTiles + " separate 180° starter tile(s), "
+                    + endTiles + " 180° Portal end tile(s), reflected " + iconTiles
+                    + " source tile icon(s), Twirl colors red/blue=" + redTwirlIcons + "/" + blueTwirlIcons
+                    + ", pre-rolled " + preRollGroups + " planet group(s) on the last prefix interval.";
             }
             finally
             {
@@ -177,6 +192,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
                 var tile = new SourcePreviewTile
                 {
+                    LocalOffset = ToLevelPosition(floor, tileSize) - startPosition,
                     TrackIcon = "None",
                     TrackIconAngle = 0f,
                     UsePreviewRotationForIcon = true,
@@ -189,6 +205,21 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
                 ResolveSourceIcon(editor, floorNumber, floor, previous, tile);
                 result.Tiles.Add(tile);
+            }
+
+            if (floors.Count >= 2 && floors.Count - 1 > regionIndex)
+            {
+                scrFloor last = floors[floors.Count - 1];
+                scrFloor previous = floors[floors.Count - 2];
+                Vector2 lastPosition = ToLevelPosition(last, tileSize);
+                Vector2 previousPosition = ToLevelPosition(previous, tileSize);
+                Vector2 incoming = lastPosition - previousPosition;
+                if (incoming.sqrMagnitude > 1.0e-8f)
+                {
+                    result.HasEndTile = true;
+                    result.EndOffset = lastPosition - startPosition;
+                    result.EndRotationDegrees = Mathf.Atan2(incoming.y, incoming.x) * Mathf.Rad2Deg;
+                }
             }
 
             return result;
@@ -236,9 +267,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 tile.TrackIcon = "Swirl";
                 float localRelativeAngle = GetRelativeOrbitDegrees(floor);
-
-                // ADOFAI's Twirl icon is red only when the relative angle after
-                // applying Twirl is strictly below 180°. 180° and above is blue.
                 tile.TrackRedSwirl = localRelativeAngle < 180f;
                 tile.TrackIconFlipped = floor.isCCW;
                 tile.TrackIconAngle = tile.TrackIconFlipped
@@ -308,7 +336,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             SetTypedData(starter, "position", firstPosition + source.StarterOffset);
             SetTypedData(starter, "trackAngle", 180f);
             SetTypedData(starter, "rotation", source.StarterRotationDegrees);
-
             SetOptionalTypedData(starter, "trackIcon", "None");
             SetOptionalTypedData(starter, "trackIconAngle", 0f);
             SetOptionalTypedData(starter, "trackIconFlipped", false);
@@ -318,7 +345,166 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             return starter;
         }
 
-        private static void RemoveOwnedStarterTiles(IList decorations)
+        private static LevelEvent CreateEndTile(
+            LevelEvent firstPreview,
+            LevelEvent lastPreview,
+            SourcePreviewTrack source)
+        {
+            LevelEvent end = lastPreview.Copy();
+            if (end == null)
+                throw new InvalidOperationException("Could not clone the generated Floor preview for the 180° end tile.");
+
+            string baseTag = "T" + source.TrackIndex;
+            SetTypedData(end, "tag",
+                baseTag + " " + baseTag + "_end qolMultiTile_" + baseTag + " "
+                + OwnerTag + " " + EndTag);
+
+            Vector2 firstPosition = ReadVector2Data(firstPreview, "position", Vector2.zero);
+            Vector2 firstLocal = source.Tiles.Count > 0 ? source.Tiles[0].LocalOffset : Vector2.zero;
+            Vector2 origin = firstPosition - firstLocal;
+            SetTypedData(end, "position", origin + source.EndOffset);
+            SetTypedData(end, "trackAngle", 180f);
+            SetTypedData(end, "rotation", source.EndRotationDegrees);
+            SetOptionalTypedData(end, "depth", source.Tiles.Count + 1);
+            SetTypedData(end, "trackIcon", "Portal");
+            SetOptionalTypedData(end, "trackIconAngle", source.EndRotationDegrees);
+            SetOptionalTypedData(end, "trackIconFlipped", false);
+            SetOptionalTypedData(end, "trackIconOutlines", false);
+            SetOptionalTypedData(end, "trackRedSwirl", false);
+            SetOptionalTypedData(end, "trackGraySetSpeedIcon", false);
+            return end;
+        }
+
+        private static int ApplyPlanetPreRoll(scnEditor editor, LevelData candidate, GenerationPlan plan)
+        {
+            if (editor == null || candidate == null || plan == null || plan.RegionStartFloor <= 0)
+                return 0;
+            if (editor.floors == null || plan.RegionStartFloor >= editor.floors.Count)
+                return 0;
+
+            int previousFloorIndex = plan.RegionStartFloor - 1;
+            while (previousFloorIndex >= 0)
+            {
+                scrFloor floor = editor.floors[previousFloorIndex];
+                if (floor != null && !floor.midSpin) break;
+                previousFloorIndex--;
+            }
+            if (previousFloorIndex < 0) return 0;
+
+            scrFloor startFloor = editor.floors[plan.RegionStartFloor];
+            scrFloor previousFloor = editor.floors[previousFloorIndex];
+            if (startFloor == null || previousFloor == null) return 0;
+
+            double previousTravel = Math.Abs(ReadDouble(previousFloor, "angleLength", 0.0) * Mathf.Rad2Deg);
+            if (!(previousTravel > 0.000001)) return 0;
+            double durationBeats = previousTravel / 180.0;
+            double amount = ReadBool(previousFloor, "isCCW", false) ? 360.0 : -360.0;
+
+            IList decorations = candidate.decorations as IList;
+            IList levelEvents = candidate.levelEvents as IList;
+            if (decorations == null || levelEvents == null) return 0;
+
+            LevelEvent orbitTemplate = FindOrbitTemplate(levelEvents);
+            if (orbitTemplate == null) return 0;
+
+            float tileSize = ResolveTileSize();
+            Vector2 anchorDelta = ToLevelPosition(startFloor, tileSize)
+                - ToLevelPosition(previousFloor, tileSize);
+            int applied = 0;
+
+            for (int i = 0; i < plan.Tracks.Count; i++)
+            {
+                AnalyzedTrack track = plan.Tracks[i];
+                LevelEvent planetA = FindPlanet(candidate, track.PlanetATag);
+                LevelEvent planetB = FindPlanet(candidate, track.PlanetBTag);
+                if (!CanPreRollPlanet(planetA, plan.RegionStartFloor, previousFloorIndex)
+                    || !CanPreRollPlanet(planetB, plan.RegionStartFloor, previousFloorIndex))
+                    continue;
+
+                ShiftPlanetToPreviousFloor(planetA, plan.RegionStartFloor, previousFloorIndex, anchorDelta);
+                ShiftPlanetToPreviousFloor(planetB, plan.RegionStartFloor, previousFloorIndex, anchorDelta);
+
+                string movingTag = track.InitialPivotIsA ? track.PlanetBTag : track.PlanetATag;
+                string centerTag = track.InitialPivotIsA ? track.PlanetATag : track.PlanetBTag;
+                LevelEvent orbit = orbitTemplate.Copy();
+                if (orbit == null) continue;
+
+                SetEventFloor(orbit, previousFloorIndex);
+                SetTypedData(orbit, "duration", durationBeats);
+                SetTypedData(orbit, "tag", movingTag);
+                SetTypedData(orbit, "centerTag", centerTag);
+                SetTypedData(orbit, "amount", amount);
+                SetTypedData(orbit, "lockRotation", false);
+                SetTypedData(orbit, "dstRadiusMultiplier", 1.0);
+                SetTypedData(orbit, "ease", "Linear");
+                SetTypedData(orbit, "angleOffset", 0.0);
+                SetTypedData(orbit, "eventTag", PreRollTag);
+                SetOptionalTypedData(orbit, "active", true);
+                levelEvents.Add(orbit);
+                applied++;
+            }
+            return applied;
+        }
+
+        private static bool CanPreRollPlanet(LevelEvent planet, int startFloor, int previousFloor)
+        {
+            if (planet == null) return false;
+            string relativeTo = Convert.ToString(SafeGetData(planet, "relativeTo"), CultureInfo.InvariantCulture) ?? "";
+            if (!string.Equals(relativeTo, "Tile", StringComparison.OrdinalIgnoreCase)) return false;
+            int floor;
+            if (!TryReadEventFloor(planet, out floor)) return false;
+            if (floor != startFloor && floor != previousFloor) return false;
+            object position = SafeGetData(planet, "position");
+            return position is Vector2 || position is Vector3;
+        }
+
+        private static void ShiftPlanetToPreviousFloor(
+            LevelEvent planet,
+            int startFloor,
+            int previousFloor,
+            Vector2 anchorDelta)
+        {
+            int floor;
+            if (!TryReadEventFloor(planet, out floor) || floor != startFloor) return;
+            Vector2 position = ReadVector2Data(planet, "position", Vector2.zero);
+            SetTypedData(planet, "position", position + anchorDelta);
+            SetEventFloor(planet, previousFloor);
+        }
+
+        private static LevelEvent FindPlanet(LevelData levelData, string requestedTag)
+        {
+            LevelEvent found = FindPlanetInList(levelData.decorations as IList, requestedTag);
+            if (found != null) return found;
+            return FindPlanetInList(levelData.levelEvents as IList, requestedTag);
+        }
+
+        private static LevelEvent FindPlanetInList(IList list, string requestedTag)
+        {
+            if (list == null || string.IsNullOrWhiteSpace(requestedTag)) return null;
+            for (int i = 0; i < list.Count; i++)
+            {
+                LevelEvent ev = list[i] as LevelEvent;
+                if (ev == null || !IsEventNamed(ev, "AddObject")) continue;
+                string objectType = Convert.ToString(SafeGetData(ev, "objectType"), CultureInfo.InvariantCulture) ?? "";
+                if (!string.Equals(objectType, "Planet", StringComparison.OrdinalIgnoreCase)) continue;
+                string tag = Convert.ToString(SafeGetData(ev, "tag"), CultureInfo.InvariantCulture) ?? "";
+                if (string.Equals(tag.Trim(), requestedTag.Trim(), StringComparison.Ordinal)) return ev;
+            }
+            return null;
+        }
+
+        private static LevelEvent FindOrbitTemplate(IList levelEvents)
+        {
+            if (levelEvents == null) return null;
+            for (int i = levelEvents.Count - 1; i >= 0; i--)
+            {
+                LevelEvent ev = levelEvents[i] as LevelEvent;
+                if (ev != null && IsEventNamed(ev, "OrbitDecoration")) return ev;
+            }
+            return null;
+        }
+
+        private static void RemoveOwnedExtraTiles(IList decorations)
         {
             if (decorations == null) return;
             for (int i = decorations.Count - 1; i >= 0; i--)
@@ -326,8 +512,22 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 LevelEvent ev = decorations[i] as LevelEvent;
                 if (ev == null || !IsEventNamed(ev, "AddObject")) continue;
                 string tag = Convert.ToString(SafeGetData(ev, "tag"), CultureInfo.InvariantCulture) ?? "";
-                if (ContainsTagToken(tag, OwnerTag) && ContainsTagToken(tag, StarterTag))
+                if (!ContainsTagToken(tag, OwnerTag)) continue;
+                if (ContainsTagToken(tag, StarterTag) || ContainsTagToken(tag, EndTag))
                     decorations.RemoveAt(i);
+            }
+        }
+
+        private static void RemoveOwnedPreRollOrbits(IList levelEvents)
+        {
+            if (levelEvents == null) return;
+            for (int i = levelEvents.Count - 1; i >= 0; i--)
+            {
+                LevelEvent ev = levelEvents[i] as LevelEvent;
+                if (ev == null || !IsEventNamed(ev, "OrbitDecoration")) continue;
+                string eventTag = Convert.ToString(SafeGetData(ev, "eventTag"), CultureInfo.InvariantCulture) ?? "";
+                if (string.Equals(eventTag.Trim(), PreRollTag, StringComparison.Ordinal))
+                    levelEvents.RemoveAt(i);
             }
         }
 
@@ -338,10 +538,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 LevelEvent ev = decorations[i] as LevelEvent;
                 if (ev == null || !IsEventNamed(ev, "AddObject")) continue;
-
                 string objectType = Convert.ToString(SafeGetData(ev, "objectType"), CultureInfo.InvariantCulture) ?? "";
                 if (!string.Equals(objectType, "Floor", StringComparison.OrdinalIgnoreCase)) continue;
-
                 string tag = Convert.ToString(SafeGetData(ev, "tag"), CultureInfo.InvariantCulture) ?? "";
                 if (!ContainsTagToken(tag, OwnerTag) || !ContainsTagToken(tag, exactTileTag)) continue;
                 return ev;
@@ -382,7 +580,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static void SetTypedData(LevelEvent ev, string key, object value)
         {
             if (!TrySetTypedData(ev, key, value))
-                throw new InvalidOperationException("Generated Floor AddObject cannot accept property '" + key + "' value '" + value + "'.");
+                throw new InvalidOperationException("Generated event cannot accept property '" + key + "' value '" + value + "'.");
         }
 
         private static bool TrySetTypedData(LevelEvent ev, string key, object value)
@@ -459,6 +657,51 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             catch { return fallback; }
         }
 
+        private static bool TryReadEventFloor(LevelEvent ev, out int floor)
+        {
+            floor = -1;
+            object value = ReadMember(ev, "floor") ?? ReadMember(ev, "floorIndex");
+            if (value == null) return false;
+            try
+            {
+                floor = Convert.ToInt32(value, CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        private static void SetEventFloor(LevelEvent ev, int floor)
+        {
+            if (ev == null) throw new InvalidOperationException("Cannot set the floor of a null event.");
+            Type type = ev.GetType();
+            const R.BindingFlags flags = R.BindingFlags.Instance | R.BindingFlags.Public | R.BindingFlags.NonPublic;
+            string[] names = { "floor", "floorIndex" };
+            for (int i = 0; i < names.Length; i++)
+            {
+                try
+                {
+                    R.PropertyInfo property = type.GetProperty(names[i], flags);
+                    if (property != null && property.CanWrite && property.GetIndexParameters().Length == 0)
+                    {
+                        property.SetValue(ev, ConvertFor(floor, property.PropertyType), null);
+                        return;
+                    }
+                }
+                catch { }
+                try
+                {
+                    R.FieldInfo field = type.GetField(names[i], flags);
+                    if (field != null)
+                    {
+                        field.SetValue(ev, ConvertFor(floor, field.FieldType));
+                        return;
+                    }
+                }
+                catch { }
+            }
+            throw new InvalidOperationException("This ADOFAI build does not expose a writable LevelEvent floor member.");
+        }
+
         private static object ReadMember(object target, string name)
         {
             if (target == null) return null;
@@ -487,6 +730,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             catch { return fallback; }
         }
 
+        private static bool ReadBool(object target, string name, bool fallback)
+        {
+            object value = ReadMember(target, name);
+            if (value == null) return fallback;
+            if (value is bool) return (bool)value;
+            bool parsed;
+            return bool.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), out parsed) ? parsed : fallback;
+        }
+
         private static float ResolveTileSize()
         {
             float tileSize = ADOBase.controller == null ? 1f : ADOBase.controller.tileSize;
@@ -505,11 +757,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             internal bool HasStarterTile;
             internal Vector2 StarterOffset;
             internal float StarterRotationDegrees;
+            internal bool HasEndTile;
+            internal Vector2 EndOffset;
+            internal float EndRotationDegrees;
             internal readonly List<SourcePreviewTile> Tiles = new List<SourcePreviewTile>();
         }
 
         private sealed class SourcePreviewTile
         {
+            internal Vector2 LocalOffset;
             internal string TrackIcon;
             internal float TrackIconAngle;
             internal bool UsePreviewRotationForIcon;
