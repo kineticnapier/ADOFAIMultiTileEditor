@@ -97,7 +97,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 SkippedTracks = skippedTracks,
                 Diagnostic = "Generated " + created + " region-only source Floor decoration(s) from F" + plan.RegionStartFloor
                     + "; replaced " + replaced + " previous MTE tile decoration(s); aligned " + alignedPlanetPairs
-                    + " auto-created planet pair(s) to each source region's first-step phase"
+                    + " auto-created planet pair(s) to each source region's inherited incoming phase"
                     + (skippedTracks > 0 ? "; preserved manual/EQOL preview(s) on " + skippedTracks + " track(s)." : ".")
             };
         }
@@ -160,16 +160,34 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             float tileSize = ResolveTileSize();
             Vector2 startPosition = ToLevelPosition(floors[regionIndex], tileSize);
-            Vector2 firstPosition = ToLevelPosition(floors[regionIndex + 1], tileSize);
-            Vector2 initialStep = firstPosition - startPosition;
-            if (initialStep.sqrMagnitude > 1.0e-8f) visual.InitialStepOffset = initialStep;
 
-            // The region-start floor is represented by the planet pair. The final runtime
-            // floor is synthetic. Preview only the real interior floors of this region.
-            for (int i = regionIndex + 1; i + 1 < floors.Count; i++)
+            // Starting in the middle of a chart is different from starting at F0.
+            // At a landed floor, the non-pivot planet is still on the incoming/previous
+            // tile. Seeding it from the next tile mirrors the whole orbit path and makes
+            // the pair appear to travel backwards. Preserve the old F0 fallback, but for
+            // a mid-chart region inherit the actual incoming planet phase.
+            if (regionIndex > 0)
+            {
+                Vector2 previousPosition = ToLevelPosition(floors[regionIndex - 1], tileSize);
+                Vector2 incomingStep = previousPosition - startPosition;
+                if (incomingStep.sqrMagnitude > 1.0e-8f) visual.InitialStepOffset = incomingStep;
+            }
+            else
+            {
+                Vector2 firstPosition = ToLevelPosition(floors[regionIndex + 1], tileSize);
+                Vector2 initialStep = firstPosition - startPosition;
+                if (initialStep.sqrMagnitude > 1.0e-8f) visual.InitialStepOffset = initialStep;
+            }
+
+            // F0 has no incoming tile and keeps the historical endpoint-only preview.
+            // For a mid-chart region the selected start floor is a real corner/straight
+            // tile with incoming geometry, so include it instead of silently dropping the
+            // first selected tile. The synthetic terminal floor is still omitted.
+            int previewStart = regionIndex > 0 ? regionIndex : regionIndex + 1;
+            for (int i = previewStart; i + 1 < floors.Count; i++)
             {
                 scrFloor floor = floors[i];
-                scrFloor previous = floors[i - 1];
+                scrFloor previous = i > 0 ? floors[i - 1] : floor;
                 float visualAngle = GetVisualTrackAngle(floor);
                 float rhythmAngle = GetRhythmAngle(floor);
                 float rotation = GetTrackRotation(floor, visualAngle);
