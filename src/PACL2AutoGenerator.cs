@@ -29,7 +29,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (editor == null || editor.levelData == null)
                 throw new InvalidOperationException("Editor is not ready.");
             if (plan == null || preview == null)
-                throw new InvalidOperationException("Analyze and verify the master path first.");
+                throw new InvalidOperationException("Analyze and verify the master region first.");
 
             LevelData original = editor.levelData.Copy();
             int selectedFloor = GameAngleProbe.TryGetSelectedFloorIndex(editor);
@@ -41,23 +41,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 int createdPlanets = EnsurePlanetDecorations(prepared, plan);
                 bool createdOrbitTemplate = EnsureOrbitTemplate(prepared, plan);
 
-                // OrbitEmitter validates and atomically commits from the currently active
-                // output/base chart. Only decorations/actions are added here; angleData is
-                // intentionally unchanged, so the verified source/base-path guard still applies.
                 TrackStore.RestoreSnapshot(editor, prepared, true);
                 OrbitCommitResult result = OrbitEmitter.GenerateAndCommit(
                     editor, plan, preview, tracks, baseTrackIndex);
 
-                // v0.6 wrote custom-event data through LevelEvent's indexer before its
-                // typed data bag. That can turn Single/Ease values into Double/String until
-                // a save/reload Decode normalizes them. Repair them in memory and re-apply
-                // events so PACL2 works immediately after generation.
                 int normalized = NormalizeConfiguredOrbitTypes(editor.levelData, plan);
-                if (normalized > 0)
-                    editor.ApplyEventsToFloors();
+                if (normalized > 0) editor.ApplyEventsToFloors();
                 editor.UpdateDecorationObjects();
 
-                result.Diagnostic += " Auto setup created " + createdPlanets
+                result.Diagnostic += " Auto setup at F" + plan.RegionStartFloor + " created " + createdPlanets
                     + " planet decoration(s)"
                     + (createdOrbitTemplate ? " and an internal Orbit template" : "")
                     + "; normalized " + normalized + " Orbit action(s) for immediate playback.";
@@ -99,13 +91,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 int countA = counts[track.PlanetATag];
                 int countB = counts[track.PlanetBTag];
 
-                if (countA > 1)
-                    throw new InvalidOperationException("Planet tag '" + track.PlanetATag + "' already has multiple AddObject decorations.");
-                if (countB > 1)
-                    throw new InvalidOperationException("Planet tag '" + track.PlanetBTag + "' already has multiple AddObject decorations.");
-
-                if (countA == 1 && countB == 1)
-                    continue;
+                if (countA > 1) throw new InvalidOperationException("Planet tag '" + track.PlanetATag + "' already has multiple AddObject decorations.");
+                if (countB > 1) throw new InvalidOperationException("Planet tag '" + track.PlanetBTag + "' already has multiple AddObject decorations.");
+                if (countA == 1 && countB == 1) continue;
 
                 if (countA != 0 || countB != 0)
                 {
@@ -117,15 +105,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 Vector2 center;
                 Vector2 moving;
                 GetAutoLayout(i, out center, out moving);
-
                 Vector2 aPosition = track.InitialPivotIsA ? center : moving;
                 Vector2 bPosition = track.InitialPivotIsA ? moving : center;
 
-                decorations.Add(CreatePlanetAddObject(track.PlanetATag, aPosition, true));
-                decorations.Add(CreatePlanetAddObject(track.PlanetBTag, bPosition, false));
+                decorations.Add(CreatePlanetAddObject(track.PlanetATag, aPosition, true, plan.RegionStartFloor));
+                decorations.Add(CreatePlanetAddObject(track.PlanetBTag, bPosition, false, plan.RegionStartFloor));
                 created += 2;
             }
-
             return created;
         }
 
@@ -136,25 +122,22 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 LevelEvent ev = list[i] as LevelEvent;
                 if (ev == null || !IsEventNamed(ev, "AddObject")) continue;
-
                 string objectType = Convert.ToString(SafeGetData(ev, "objectType"), CultureInfo.InvariantCulture) ?? "";
                 if (!string.Equals(objectType, "Planet", StringComparison.OrdinalIgnoreCase)) continue;
-
                 string tag = Convert.ToString(SafeGetData(ev, "tag"), CultureInfo.InvariantCulture) ?? "";
                 tag = tag.Trim();
                 if (counts.ContainsKey(tag)) counts[tag] = counts[tag] + 1;
             }
         }
 
-        private static LevelEvent CreatePlanetAddObject(string tag, Vector2 position, bool isA)
+        private static LevelEvent CreatePlanetAddObject(string tag, Vector2 position, bool isA, int floor)
         {
-            LevelEvent ev = CreateCustomEvent("AddObject", 0);
+            LevelEvent ev = CreateCustomEvent("AddObject", floor);
             SetRequiredData(ev, "objectType", "Planet");
             SetRequiredData(ev, "tag", tag);
             SetRequiredData(ev, "planetColorType", isA ? "DefaultRed" : "DefaultBlue");
             SetRequiredData(ev, "position", position);
             SetRequiredData(ev, "relativeTo", "Tile");
-
             SetOptionalData(ev, "pivotOffset", Vector2.zero);
             SetOptionalData(ev, "rotation", 0f);
             SetOptionalData(ev, "lockRotation", false);
@@ -171,10 +154,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             int col = trackIndex % LayoutColumns;
             int row = trackIndex / LayoutColumns;
-
-            // Keep the first pair close to the hand-built golden sample: the moving
-            // planet starts one tile to the left of its center. More groups are laid
-            // out on a deterministic grid so arbitrary track counts do not overlap.
             center = new Vector2(0.5f + col * GroupSpacingX, 2.5f - row * GroupSpacingY);
             moving = center + Vector2.left;
         }
@@ -188,15 +167,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             for (int i = 0; i < events.Count; i++)
             {
                 LevelEvent ev = events[i] as LevelEvent;
-                if (ev != null && IsEventNamed(ev, "OrbitDecoration") && IsConfiguredOrbitPair(ev, plan))
-                    return false;
+                if (ev != null && IsEventNamed(ev, "OrbitDecoration") && IsConfiguredOrbitPair(ev, plan)) return false;
             }
 
             if (plan.Tracks.Count == 0 || plan.Tracks[0].Segments.Count == 0)
                 throw new InvalidOperationException("The analyzed plan has no segment available for an Orbit template.");
 
             TrackSegment segment = plan.Tracks[0].Segments[0];
-            LevelEvent template = CreateCustomEvent("OrbitDecoration", 0);
+            LevelEvent template = CreateCustomEvent("OrbitDecoration", plan.RegionStartFloor);
             SetRequiredData(template, "duration", segment.DurationBeats);
             SetRequiredData(template, "tag", segment.MovingTag);
             SetRequiredData(template, "centerTag", segment.CenterTag);
@@ -214,17 +192,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             IList events = levelData.levelEvents as IList;
             if (events == null) return 0;
-
             int normalizedEvents = 0;
             for (int i = 0; i < events.Count; i++)
             {
                 LevelEvent ev = events[i] as LevelEvent;
-                if (ev == null || !IsEventNamed(ev, "OrbitDecoration") || !IsConfiguredOrbitPair(ev, plan))
-                    continue;
-
+                if (ev == null || !IsEventNamed(ev, "OrbitDecoration") || !IsConfiguredOrbitPair(ev, plan)) continue;
                 bool changed = false;
-                for (int k = 0; k < OrbitOwnedKeys.Length; k++)
-                    changed |= NormalizeDataType(ev, OrbitOwnedKeys[k]);
+                for (int k = 0; k < OrbitOwnedKeys.Length; k++) changed |= NormalizeDataType(ev, OrbitOwnedKeys[k]);
                 if (changed) normalizedEvents++;
             }
             return normalizedEvents;
@@ -233,18 +207,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static bool NormalizeDataType(LevelEvent ev, string key)
         {
             if (ev == null || ev.info == null || ev.info.propertiesInfo == null) return false;
-
             ADOFAI.PropertyInfo propertyInfo;
-            if (!ev.info.propertiesInfo.TryGetValue(key, out propertyInfo) || propertyInfo == null)
-                return false;
-
+            if (!ev.info.propertiesInfo.TryGetValue(key, out propertyInfo) || propertyInfo == null) return false;
             object current = SafeGetData(ev, key);
             object defaultValue = propertyInfo.value_default;
             if (current == null || defaultValue == null) return false;
-
             Type targetType = defaultValue.GetType();
             if (targetType.IsInstanceOfType(current)) return false;
-
             ev[key] = ConvertFor(current, targetType);
             if (ev.disabled != null && ev.disabled.ContainsKey(key)) ev.disabled[key] = false;
             return true;
@@ -262,8 +231,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 throw new InvalidOperationException("ADOFAI level-event metadata is not initialized.");
 
             LevelEventInfo direct;
-            if (GCS.levelEventsInfo.TryGetValue(requestedName, out direct) && direct != null)
-                return direct;
+            if (GCS.levelEventsInfo.TryGetValue(requestedName, out direct) && direct != null) return direct;
 
             string target = NormalizeEventName(requestedName);
             LevelEventInfo suffixMatch = null;
@@ -271,20 +239,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 LevelEventInfo info = pair.Value;
                 if (info == null) continue;
-
                 string keyNormalized = NormalizeEventName(pair.Key);
                 string infoNormalized = NormalizeEventName(info.name);
-                if (keyNormalized == target || infoNormalized == target)
-                    return info;
-
+                if (keyNormalized == target || infoNormalized == target) return info;
                 if (keyNormalized.EndsWith(target, StringComparison.Ordinal)
-                    || infoNormalized.EndsWith(target, StringComparison.Ordinal))
-                    suffixMatch = info;
+                    || infoNormalized.EndsWith(target, StringComparison.Ordinal)) suffixMatch = info;
             }
-
             if (suffixMatch != null) return suffixMatch;
-            throw new InvalidOperationException(
-                "PACL2 event metadata '" + requestedName + "' is unavailable. Make sure PACL2 is loaded before generating.");
+            throw new InvalidOperationException("PACL2 event metadata '" + requestedName + "' is unavailable. Make sure PACL2 is loaded before generating.");
         }
 
         private static string NormalizeEventName(string value)
@@ -314,29 +276,25 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             string center = Convert.ToString(SafeGetData(ev, "centerTag"), CultureInfo.InvariantCulture) ?? "";
             moving = moving.Trim();
             center = center.Trim();
-
             for (int i = 0; i < plan.Tracks.Count; i++)
             {
                 AnalyzedTrack track = plan.Tracks[i];
                 if ((moving == track.PlanetATag && center == track.PlanetBTag)
-                    || (moving == track.PlanetBTag && center == track.PlanetATag))
-                    return true;
+                    || (moving == track.PlanetBTag && center == track.PlanetATag)) return true;
             }
             return false;
         }
 
         private static void SetRequiredData(LevelEvent ev, string key, object value)
         {
-            if (ev == null || ev.info == null || ev.info.propertiesInfo == null
-                || !ev.info.propertiesInfo.ContainsKey(key))
+            if (ev == null || ev.info == null || ev.info.propertiesInfo == null || !ev.info.propertiesInfo.ContainsKey(key))
                 throw new InvalidOperationException("Event '" + EventDisplayName(ev) + "' has no property '" + key + "'.");
             SetTypedData(ev, key, value);
         }
 
         private static void SetOptionalData(LevelEvent ev, string key, object value)
         {
-            if (ev == null || ev.info == null || ev.info.propertiesInfo == null
-                || !ev.info.propertiesInfo.ContainsKey(key)) return;
+            if (ev == null || ev.info == null || ev.info.propertiesInfo == null || !ev.info.propertiesInfo.ContainsKey(key)) return;
             SetTypedData(ev, key, value);
         }
 
@@ -344,7 +302,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             object current = SafeGetData(ev, key);
             Type targetType = current != null ? current.GetType() : null;
-
             if (targetType == null && ev.info != null && ev.info.propertiesInfo != null)
             {
                 ADOFAI.PropertyInfo propertyInfo;
@@ -352,7 +309,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     && propertyInfo != null && propertyInfo.value_default != null)
                     targetType = propertyInfo.value_default.GetType();
             }
-
             ev[key] = targetType == null ? value : ConvertFor(value, targetType);
             if (ev.disabled != null && ev.disabled.ContainsKey(key)) ev.disabled[key] = false;
         }
@@ -360,8 +316,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static object SafeGetData(LevelEvent ev, string key)
         {
             if (ev == null) return null;
-            try { return ev[key]; }
-            catch { return null; }
+            try { return ev[key]; } catch { return null; }
         }
 
         private static string EventDisplayName(LevelEvent ev)
@@ -376,17 +331,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (value == null || targetType == null) return value;
             Type actualTarget = Nullable.GetUnderlyingType(targetType) ?? targetType;
             if (actualTarget.IsInstanceOfType(value)) return value;
-
             if (actualTarget.IsEnum)
             {
                 string text = Convert.ToString(value, CultureInfo.InvariantCulture);
                 return Enum.Parse(actualTarget, text, true);
             }
-            if (actualTarget == typeof(string))
-                return Convert.ToString(value, CultureInfo.InvariantCulture);
-            if (actualTarget == typeof(Vector2) && value is Vector2)
-                return value;
-
+            if (actualTarget == typeof(string)) return Convert.ToString(value, CultureInfo.InvariantCulture);
+            if (actualTarget == typeof(Vector2) && value is Vector2) return value;
             return Convert.ChangeType(value, actualTarget, CultureInfo.InvariantCulture);
         }
     }
