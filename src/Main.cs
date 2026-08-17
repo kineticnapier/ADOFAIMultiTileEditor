@@ -201,8 +201,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     int baseTrackIndex = store.ActiveIndex;
                     OrbitCommitResult orbitResult = MasterOutputGenerator.GenerateAndCommit(editor, lastPlan, lastPathPreview, store.Tracks, baseTrackIndex);
                     TileDecorationResult tileResult = FixedTileDecorationGenerator.GenerateAndCommit(editor, store.Tracks, lastPlan);
+                    string previewFinish = TilePreviewPostProcessor.ApplyAndCommit(editor, store.Tracks, lastPlan);
                     store.DetachActive();
-                    status = orbitResult.Diagnostic + " " + tileResult.Diagnostic + " Editor is now detached from source snapshots.";
+                    status = orbitResult.Diagnostic + " " + tileResult.Diagnostic + " " + previewFinish + " Editor is now detached from source snapshots.";
                 });
             }
 
