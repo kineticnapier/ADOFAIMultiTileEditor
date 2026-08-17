@@ -9,6 +9,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal string Name;
         internal LevelData Data;
         internal int CursorFloor;
+        internal int RegionStartFloor;
         internal List<AngleSample> Angles = new List<AngleSample>();
         internal string PlanetATag = "";
         internal string PlanetBTag = "";
@@ -19,6 +20,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             Name = name;
             Data = data;
             CursorFloor = cursorFloor;
+            RegionStartFloor = cursorFloor;
             PivotIsA = false;
         }
 
@@ -74,7 +76,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             slot.Angles = GameAngleProbe.Capture(editor);
             tracks.Add(slot);
             activeIndex = tracks.Count - 1;
-            ClampCursor(slot);
+            ClampFloors(slot);
             return activeIndex;
         }
 
@@ -87,7 +89,20 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             int selected = GameAngleProbe.TryGetCurrentFloorIndex(editor);
             if (selected >= 0) track.CursorFloor = selected;
-            ClampCursor(track);
+            ClampFloors(track);
+        }
+
+        internal void SetActiveRegionStartFromSelection(scnEditor editor)
+        {
+            if (activeIndex < 0 || activeIndex >= tracks.Count)
+                throw new InvalidOperationException("Switch to a source track before changing its region start.");
+            int selected = GameAngleProbe.TryGetSelectedFloorIndex(editor);
+            if (selected < 0)
+                throw new InvalidOperationException("Select the floor where Multi Tile should begin first.");
+
+            TrackSlot track = tracks[activeIndex];
+            track.RegionStartFloor = selected;
+            ClampFloors(track);
         }
 
         internal void SwitchTo(scnEditor editor, int index)
@@ -100,7 +115,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             RestoreSnapshot(editor, tracks[index].Data, true);
             activeIndex = index;
             tracks[index].Angles = GameAngleProbe.Capture(editor);
-            ClampCursor(tracks[index]);
+            ClampFloors(tracks[index]);
 
             int floor = tracks[index].CursorFloor;
             if (floor >= 0 && floor < editor.floors.Count)
@@ -125,7 +140,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 activeIndex = Math.Min(index, tracks.Count - 1);
                 RestoreSnapshot(editor, tracks[activeIndex].Data, true);
                 tracks[activeIndex].Angles = GameAngleProbe.Capture(editor);
-                ClampCursor(tracks[activeIndex]);
+                ClampFloors(tracks[activeIndex]);
             }
         }
 
@@ -144,12 +159,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
         }
 
-        private static void ClampCursor(TrackSlot track)
+        private static void ClampFloors(TrackSlot track)
         {
             int max = track.Angles != null && track.Angles.Count > 0
                 ? track.Angles.Count - 1
                 : (track.Data != null && track.Data.angleData != null ? Math.Max(0, track.Data.angleData.Count - 1) : 0);
             track.CursorFloor = Math.Max(0, Math.Min(track.CursorFloor, max));
+            track.RegionStartFloor = Math.Max(0, Math.Min(track.RegionStartFloor, max));
         }
     }
 }
