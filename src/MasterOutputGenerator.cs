@@ -20,6 +20,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 throw new InvalidOperationException("Editor is not ready.");
             if (plan == null || !(plan.MasterBpm > 0.0))
                 throw new InvalidOperationException("Analyze a valid master timing plan first.");
+            if (preview == null)
+                throw new InvalidOperationException("Verify the master path before generating.");
+
+            int chordHelpers = ChordPlanExpander.Expand(plan, preview);
 
             LevelData original = editor.levelData.Copy();
             int selectedFloor = GameAngleProbe.TryGetSelectedFloorIndex(editor);
@@ -59,7 +63,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 result.Diagnostic += " Master timing uses constant "
                     + plan.MasterBpm.ToString("0.######", CultureInfo.InvariantCulture)
                     + " BPM from F" + plan.RegionStartFloor + "; replaced " + removedSetSpeed
-                    + " source/base SetSpeed action(s) inside the region while preserving earlier timing events.";
+                    + " source/base SetSpeed action(s) inside the region while preserving earlier timing events."
+                    + (chordHelpers > 0
+                        ? " Added " + chordHelpers + " 0.1° helper floor(s) to represent simultaneous source hits."
+                        : "");
 
                 success = true;
                 return result;
@@ -224,6 +231,224 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (string.Equals(name, "SetSpeed", StringComparison.OrdinalIgnoreCase)) return true;
             string eventType = ev == null ? string.Empty : Convert.ToString(ev.eventType, CultureInfo.InvariantCulture) ?? string.Empty;
             return string.Equals(eventType, "SetSpeed", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    internal static class ChordPlanExpander
+    {
+        private const double HelperDegrees = 0.1;
+        private const double HelperBeat = HelperDegrees / 180.0;
+        private const double MaxSingleTravelDegrees = 360.0;
+
+        private sealed class BoundaryGroup
+        {
+            internal double Beat;
+            internal readonly List<int> Tracks = new List<int>();
+        }
+
+        private sealed class BoundaryOccurrence
+        {
+            internal double Beat;
+            internal int Track;
+        }
+
+        internal static int Expand(GenerationPlan plan, MasterPathPreview preview)
+        {
+            if (plan == null || preview == null || plan.Tracks.Count < 2) return 0;
+
+            List<BoundaryGroup> groups = BuildBoundaryGroups(plan);
+            int helpers = 0;
+            for (int i = 0; i < groups.Count; i++)
+                if (groups[i].Tracks.Count > 1) helpers += groups[i].Tracks.Count - 1;
+            if (helpers == 0) return 0;
+
+            ValidateRoom(groups);
+
+            for (int t = 0; t < plan.Tracks.Count; t++)
+            {
+                AnalyzedTrack track = plan.Tracks[t];
+                for (int s = 0; s < track.Segments.Count; s++)
+                {
+                    TrackSegment segment = track.Segments[s];
+                    double newStart = ShiftedBeat(groups, segment.StartBeat, segment.TrackIndex);
+                    double newEnd = ShiftedBeat(groups, segment.EndBeat, segment.TrackIndex);
+                    if (!(newEnd > newStart + TimelineMerger.BeatEpsilon))
+                    {
+                        throw new InvalidOperationException(
+                            "0.1° simultaneous-hit expansion would collapse a segment on track '"
+                            + track.Name + "' near source floor " + segment.SourceFloor + ".");
+                    }
+                    segment.StartBeat = newStart;
+                    segment.EndBeat = newEnd;
+                    segment.DurationBeats = newEnd - newStart;
+                }
+
+                track.SourceFloors.Clear();
+                for (int s = 0; s < track.Segments.Count; s++)
+                {
+                    TrackSegment segment = track.Segments[s];
+                    track.SourceFloors.Add(new SourceFloorPoint
+                    {
+                        Floor = segment.SourceFloor,
+                        Beat = segment.StartBeat
+                    });
+                }
+                TrackSegment last = track.Segments[track.Segments.Count - 1];
+                track.SourceFloors.Add(new SourceFloorPoint
+                {
+                    Floor = last.SourceFloor + 1,
+                    Beat = last.EndBeat
+                });
+                track.StartBeat = track.Segments[0].StartBeat;
+                track.EndBeat = last.EndBeat;
+            }
+
+            RebuildAnchors(plan);
+            RebuildPreview(plan, preview);
+            plan.StartBeat = plan.Anchors[0].Beat;
+            plan.EndBeat = plan.Anchors[plan.Anchors.Count - 1].Beat;
+            plan.Diagnostic = (plan.Diagnostic ?? string.Empty).TrimEnd('.')
+                + "; expanded simultaneous boundaries with " + helpers + " helper floor(s) at 0.1° spacing.";
+            return helpers;
+        }
+
+        private static List<BoundaryGroup> BuildBoundaryGroups(GenerationPlan plan)
+        {
+            var occurrences = new List<BoundaryOccurrence>();
+            for (int t = 0; t < plan.Tracks.Count; t++)
+            {
+                AnalyzedTrack track = plan.Tracks[t];
+                for (int s = 0; s < track.Segments.Count; s++)
+                {
+                    TrackSegment segment = track.Segments[s];
+                    occurrences.Add(new BoundaryOccurrence { Beat = segment.StartBeat, Track = segment.TrackIndex });
+                    occurrences.Add(new BoundaryOccurrence { Beat = segment.EndBeat, Track = segment.TrackIndex });
+                }
+            }
+            occurrences.Sort(delegate(BoundaryOccurrence a, BoundaryOccurrence b)
+            {
+                int beat = a.Beat.CompareTo(b.Beat);
+                return beat != 0 ? beat : a.Track.CompareTo(b.Track);
+            });
+
+            var groups = new List<BoundaryGroup>();
+            for (int i = 0; i < occurrences.Count; i++)
+            {
+                BoundaryOccurrence occurrence = occurrences[i];
+                BoundaryGroup group = groups.Count > 0
+                    && TimelineMerger.NearlyEqual(groups[groups.Count - 1].Beat, occurrence.Beat)
+                    ? groups[groups.Count - 1]
+                    : null;
+                if (group == null)
+                {
+                    group = new BoundaryGroup { Beat = occurrence.Beat };
+                    groups.Add(group);
+                }
+                if (!group.Tracks.Contains(occurrence.Track)) group.Tracks.Add(occurrence.Track);
+            }
+            for (int i = 0; i < groups.Count; i++) groups[i].Tracks.Sort();
+            return groups;
+        }
+
+        private static void ValidateRoom(IList<BoundaryGroup> groups)
+        {
+            for (int i = 0; i + 1 < groups.Count; i++)
+            {
+                double span = Math.Max(0, groups[i].Tracks.Count - 1) * HelperBeat;
+                double gap = groups[i + 1].Beat - groups[i].Beat;
+                if (span + TimelineMerger.BeatEpsilon >= gap)
+                {
+                    throw new InvalidOperationException(
+                        "Two source hit groups are too close to insert the requested 0.1° simultaneous helper tile(s) without changing their order.");
+                }
+            }
+        }
+
+        private static double ShiftedBeat(IList<BoundaryGroup> groups, double beat, int trackIndex)
+        {
+            for (int i = 0; i < groups.Count; i++)
+            {
+                BoundaryGroup group = groups[i];
+                if (!TimelineMerger.NearlyEqual(group.Beat, beat)) continue;
+                int order = group.Tracks.IndexOf(trackIndex);
+                return order < 0 ? beat : group.Beat + order * HelperBeat;
+            }
+            return beat;
+        }
+
+        private static void RebuildAnchors(GenerationPlan plan)
+        {
+            var times = new List<double>();
+            for (int t = 0; t < plan.Tracks.Count; t++)
+            {
+                AnalyzedTrack track = plan.Tracks[t];
+                for (int s = 0; s < track.Segments.Count; s++)
+                {
+                    times.Add(track.Segments[s].StartBeat);
+                    times.Add(track.Segments[s].EndBeat);
+                }
+            }
+            times.Sort();
+
+            plan.Anchors.Clear();
+            for (int i = 0; i < times.Count; i++)
+            {
+                double beat = times[i];
+                if (plan.Anchors.Count == 0
+                    || !TimelineMerger.NearlyEqual(plan.Anchors[plan.Anchors.Count - 1].Beat, beat))
+                    plan.Anchors.Add(new MasterAnchor { Beat = beat });
+            }
+
+            for (int t = 0; t < plan.Tracks.Count; t++)
+            {
+                AnalyzedTrack track = plan.Tracks[t];
+                for (int s = 0; s < track.Segments.Count; s++)
+                {
+                    TrackSegment segment = track.Segments[s];
+                    int anchor = TimelineMerger.FindAnchorIndex(plan.Anchors, segment.StartBeat);
+                    if (anchor < 0)
+                        throw new InvalidOperationException("Expanded simultaneous hit could not be mapped back to the master path.");
+                    segment.MasterAnchorIndex = anchor;
+                    plan.Anchors[anchor].StartingSegments.Add(segment);
+                }
+            }
+        }
+
+        private static void RebuildPreview(GenerationPlan plan, MasterPathPreview preview)
+        {
+            preview.AngleData.Clear();
+            preview.RuntimeAnchorBeats.Clear();
+            preview.RuntimeFloorCount = 0;
+            preview.MaxAngleErrorDegrees = 0.0;
+            preview.MaxBeatError = 0.0;
+
+            double previousHeading = plan.RegionStartHeading;
+            bool inheritedIsCCW = plan.RegionInheritedIsCCW;
+            for (int i = 0; i + 1 < plan.Anchors.Count; i++)
+            {
+                double deltaBeat = plan.Anchors[i + 1].Beat - plan.Anchors[i].Beat;
+                if (!(deltaBeat > TimelineMerger.BeatEpsilon))
+                    throw new InvalidOperationException("Expanded master timeline contains a zero/negative interval near M" + i + ".");
+
+                double travelDegrees = deltaBeat * 180.0;
+                if (travelDegrees > MaxSingleTravelDegrees + 0.02)
+                    throw new InvalidOperationException("Expanded master interval exceeds 360° near M" + i + ".");
+
+                double heading = inheritedIsCCW
+                    ? NormalizeDegrees(previousHeading - 180.0 + travelDegrees)
+                    : NormalizeDegrees(previousHeading + 180.0 - travelDegrees);
+                if (heading < 0.0001 || heading > 359.9999) heading = 0.0;
+                preview.AngleData.Add((float)heading);
+                previousHeading = heading;
+            }
+        }
+
+        private static double NormalizeDegrees(double value)
+        {
+            value %= 360.0;
+            if (value < 0.0) value += 360.0;
+            if (Math.Abs(value - 360.0) < 1.0e-9) value = 0.0;
+            return value;
         }
     }
 }
