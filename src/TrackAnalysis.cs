@@ -14,14 +14,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal string TrackName;
         internal int SourceFloor;
 
-        // Master-timeline coordinates. These are filled after every source track has
-        // been reconstructed and a common constant master BPM has been selected.
         internal double StartBeat;
         internal double EndBeat;
         internal double DurationBeats;
 
-        // Source timing retained separately so tracks with different SetSpeed maps can
-        // be merged by real time rather than by their local beat counts.
         internal double StartSeconds;
         internal double EndSeconds;
         internal double DurationSeconds;
@@ -44,6 +40,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal bool InitialPivotIsA;
         internal double BaseBpm;
 
+        internal int RegionStartFloor;
+        internal double RegionStartHeading;
+        internal bool RegionInheritedIsCCW;
+
         internal double StartBeat;
         internal double EndBeat;
         internal double StartSeconds;
@@ -61,9 +61,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
     internal sealed class GenerationPlan
     {
-        // The generated output deliberately uses one constant BPM. Source SetSpeed maps
-        // are already baked into each segment's real-time position/duration.
         internal double MasterBpm;
+        internal int RegionStartFloor;
+        internal double RegionStartHeading;
+        internal bool RegionInheritedIsCCW;
+
         internal double StartBeat;
         internal double EndBeat;
         internal double StartSeconds;
