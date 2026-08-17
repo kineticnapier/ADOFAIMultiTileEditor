@@ -11,6 +11,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
     internal static class TilePreviewPostProcessor
     {
         private const string OwnerTag = "adofaiMTEGenerated";
+        private const string StarterTag = "adofaiMTEStarter";
         private const double SpeedEpsilon = 1.0e-5;
 
         internal static string ApplyAndCommit(scnEditor editor, IList<TrackSlot> tracks, GenerationPlan plan)
@@ -27,34 +28,55 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             int starterTiles = 0;
             int iconTiles = 0;
+            int redTwirlIcons = 0;
+            int blueTwirlIcons = 0;
             IList decorations = candidate.decorations as IList;
             if (decorations == null)
                 throw new InvalidOperationException("LevelData.decorations is not list-compatible in this game build.");
 
+            RemoveOwnedStarterTiles(decorations);
+
             for (int t = 0; t < sourceTracks.Count; t++)
             {
                 SourcePreviewTrack source = sourceTracks[t];
+                LevelEvent firstOwnedPreview = FindOwnedPreview(decorations, source.TrackIndex, 0);
+
+                // A mid-chart Multi Tile start needs one extra straight tile on the
+                // incoming side. Do not mutate the real start tile: it keeps its source
+                // corner/straight shape and source icon.
+                if (source.HasStarterTile && firstOwnedPreview != null)
+                {
+                    LevelEvent starter = CreateStarterTile(firstOwnedPreview, source);
+                    decorations.Add(starter);
+                    starterTiles++;
+                }
+
                 for (int i = 0; i < source.Tiles.Count; i++)
                 {
                     LevelEvent preview = FindOwnedPreview(decorations, source.TrackIndex, i);
                     if (preview == null) continue; // manual/EQOL preview was intentionally preserved
 
                     SourcePreviewTile tile = source.Tiles[i];
-                    if (tile.ForceStarter180)
-                    {
-                        SetTypedData(preview, "trackAngle", 180f);
-                        SetTypedData(preview, "rotation", tile.StarterRotationDegrees);
-                        starterTiles++;
-                    }
+                    if (!TrySetTypedData(preview, "trackIcon", tile.TrackIcon))
+                        continue;
 
-                    if (TrySetTypedData(preview, "trackIcon", tile.TrackIcon))
+                    float iconAngle = tile.UsePreviewRotationForIcon
+                        ? ReadFloatData(preview, "rotation", 0f)
+                        : tile.TrackIconAngle;
+
+                    SetOptionalTypedData(preview, "trackIconAngle", iconAngle);
+                    SetOptionalTypedData(preview, "trackIconFlipped", tile.TrackIconFlipped);
+                    SetOptionalTypedData(preview, "trackIconOutlines", tile.TrackIconOutlines);
+                    SetOptionalTypedData(preview, "trackRedSwirl", tile.TrackRedSwirl);
+                    SetOptionalTypedData(preview, "trackGraySetSpeedIcon", tile.TrackGraySetSpeedIcon);
+                    SetOptionalTypedData(preview, "trackSetSpeedIconBpm", tile.TrackSetSpeedIconBpm);
+
+                    if (!string.Equals(tile.TrackIcon, "None", StringComparison.OrdinalIgnoreCase))
+                        iconTiles++;
+                    if (string.Equals(tile.TrackIcon, "Swirl", StringComparison.OrdinalIgnoreCase))
                     {
-                        SetOptionalTypedData(preview, "trackIconAngle", tile.TrackIconAngle);
-                        SetOptionalTypedData(preview, "trackIconFlipped", tile.TrackIconFlipped);
-                        SetOptionalTypedData(preview, "trackIconOutlines", tile.TrackIconOutlines);
-                        SetOptionalTypedData(preview, "trackGraySetSpeedIcon", tile.TrackGraySetSpeedIcon);
-                        SetOptionalTypedData(preview, "trackSetSpeedIconBpm", tile.TrackSetSpeedIconBpm);
-                        if (!string.Equals(tile.TrackIcon, "None", StringComparison.OrdinalIgnoreCase)) iconTiles++;
+                        if (tile.TrackRedSwirl) redTwirlIcons++;
+                        else blueTwirlIcons++;
                     }
                 }
             }
@@ -65,8 +87,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 TrackStore.RestoreSnapshot(editor, candidate, true);
                 editor.UpdateDecorationObjects();
                 committed = true;
-                return "Preview finish: forced " + starterTiles + " mid-region starter tile(s) to 180° and reflected "
-                    + iconTiles + " source tile icon(s).";
+                return "Preview finish: added " + starterTiles + " separate 180° starter tile(s), reflected "
+                    + iconTiles + " source tile icon(s), Twirl colors red/blue="
+                    + redTwirlIcons + "/" + blueTwirlIcons + ".";
             }
             finally
             {
@@ -130,45 +153,182 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (regionIndex < 0 || regionIndex + 1 >= floors.Count) return result;
 
             float tileSize = ResolveTileSize();
+            Vector2 startPosition = ToLevelPosition(floors[regionIndex], tileSize);
+
+            if (regionIndex > 0)
+            {
+                Vector2 previousPosition = ToLevelPosition(floors[regionIndex - 1], tileSize);
+                Vector2 incomingOffset = previousPosition - startPosition;
+                Vector2 incomingDirection = startPosition - previousPosition;
+
+                result.HasStarterTile = incomingOffset.sqrMagnitude > 1.0e-8f;
+                result.StarterOffset = incomingOffset;
+                result.StarterRotationDegrees = incomingDirection.sqrMagnitude <= 1.0e-8f
+                    ? 0f
+                    : Mathf.Atan2(incomingDirection.y, incomingDirection.x) * Mathf.Rad2Deg;
+            }
+
             int previewStart = regionIndex > 0 ? regionIndex : regionIndex + 1;
             for (int i = previewStart; i + 1 < floors.Count; i++)
             {
                 scrFloor floor = floors[i];
                 scrFloor previous = i > 0 ? floors[i - 1] : floor;
-                double speed = ReadDouble(floor, "speed", 1.0);
-                double previousSpeed = ReadDouble(previous, "speed", 1.0);
+                int floorNumber = FindRawFloorIndex(editor, floor);
 
-                string runtimeIcon = ReadIconName(floor);
-                string icon = !string.IsNullOrEmpty(runtimeIcon)
-                    ? runtimeIcon
-                    : SpeedIcon(previousSpeed, speed);
-
-                bool speedIcon = IsSpeedIcon(icon);
                 var tile = new SourcePreviewTile
                 {
-                    TrackIcon = icon,
-                    TrackIconAngle = (float)ReadDouble(floor, "trackIconAngle", 0.0),
-                    TrackIconFlipped = ReadBool(floor, "trackIconFlipped", false),
-                    TrackIconOutlines = ReadBool(floor, "trackIconOutlines", false),
-                    TrackGraySetSpeedIcon = ReadBool(floor, "trackGraySetSpeedIcon", speedIcon),
-                    TrackSetSpeedIconBpm = ReadDouble(floor, "trackSetSpeedIconBpm", editor.levelData.bpm * speed),
-                    ForceStarter180 = regionIndex > 0 && i == regionIndex,
-                    StarterRotationDegrees = 0f
+                    TrackIcon = "None",
+                    TrackIconAngle = 0f,
+                    UsePreviewRotationForIcon = true,
+                    TrackIconFlipped = false,
+                    TrackIconOutlines = false,
+                    TrackRedSwirl = false,
+                    TrackGraySetSpeedIcon = false,
+                    TrackSetSpeedIconBpm = editor.levelData.bpm * ReadDouble(floor, "speed", 1.0)
                 };
 
-                if (tile.ForceStarter180)
-                {
-                    Vector2 previousPosition = ToLevelPosition(previous, tileSize);
-                    Vector2 startPosition = ToLevelPosition(floor, tileSize);
-                    Vector2 incoming = startPosition - previousPosition;
-                    if (incoming.sqrMagnitude > 1.0e-8f)
-                        tile.StarterRotationDegrees = Mathf.Atan2(incoming.y, incoming.x) * Mathf.Rad2Deg;
-                }
-
+                ResolveSourceIcon(editor, floorNumber, floor, previous, tile);
                 result.Tiles.Add(tile);
             }
 
             return result;
+        }
+
+        private static void ResolveSourceIcon(
+            scnEditor editor,
+            int floorNumber,
+            scrFloor floor,
+            scrFloor previous,
+            SourcePreviewTile tile)
+        {
+            if (floorNumber < 0) return;
+
+            LevelEvent speedEvent = FindLastEvent(editor, floorNumber, LevelEventType.SetSpeed);
+            LevelEvent twirlEvent = FindLastEvent(editor, floorNumber, LevelEventType.Twirl);
+            LevelEvent checkpointEvent = FindLastEvent(editor, floorNumber, LevelEventType.Checkpoint);
+            LevelEvent multiPlanetEvent = FindLastEvent(editor, floorNumber, LevelEventType.MultiPlanet);
+
+            double speed = ReadDouble(floor, "speed", 1.0);
+            double previousSpeed = ReadDouble(previous, "speed", 1.0);
+            double ratio = previousSpeed > SpeedEpsilon ? speed / previousSpeed : 1.0;
+
+            if (speedEvent != null && ratio >= 1.9999)
+            {
+                tile.TrackIcon = "DoubleRabbit";
+                ApplySpeedIconData(editor, floor, tile);
+            }
+            else if (speedEvent != null && ratio <= 0.2501)
+            {
+                tile.TrackIcon = "DoubleSnail";
+                ApplySpeedIconData(editor, floor, tile);
+            }
+            else if (speedEvent != null && ratio >= 1.0499)
+            {
+                tile.TrackIcon = "Rabbit";
+                ApplySpeedIconData(editor, floor, tile);
+            }
+            else if (speedEvent != null && ratio <= 0.9501)
+            {
+                tile.TrackIcon = "Snail";
+                ApplySpeedIconData(editor, floor, tile);
+            }
+            else if (twirlEvent != null)
+            {
+                tile.TrackIcon = "Swirl";
+                float localRelativeAngle = GetRelativeOrbitDegrees(floor);
+
+                // ADOFAI's Twirl icon is red only when the relative angle after
+                // applying Twirl is strictly below 180°. 180° and above is blue.
+                tile.TrackRedSwirl = localRelativeAngle < 180f;
+                tile.TrackIconFlipped = floor.isCCW;
+                tile.TrackIconAngle = tile.TrackIconFlipped
+                    ? 180f - (180f - localRelativeAngle) / 2f
+                    : (180f - localRelativeAngle) / 2f;
+                tile.UsePreviewRotationForIcon = false;
+            }
+            else if (checkpointEvent != null)
+            {
+                tile.TrackIcon = "Checkpoint";
+            }
+            else if (multiPlanetEvent != null)
+            {
+                string planets = Convert.ToString(SafeGetData(multiPlanetEvent, "planets"), CultureInfo.InvariantCulture) ?? "";
+                tile.TrackIcon = string.Equals(planets, "TwoPlanets", StringComparison.OrdinalIgnoreCase)
+                    ? "MultiPlanetTwo"
+                    : "MultiPlanetThreeMore";
+            }
+        }
+
+        private static void ApplySpeedIconData(scnEditor editor, scrFloor floor, SourcePreviewTile tile)
+        {
+            tile.TrackGraySetSpeedIcon = false;
+            tile.TrackSetSpeedIconBpm = editor.levelData.bpm * ReadDouble(floor, "speed", 1.0);
+        }
+
+        private static float GetRelativeOrbitDegrees(scrFloor floor)
+        {
+            double moved = scrMisc.GetAngleMoved(floor.entryangle, floor.exitangle, !floor.isCCW);
+            float degrees = Mathf.Abs((float)moved * Mathf.Rad2Deg);
+            if (degrees <= 0.000001f) return 360f;
+            return degrees;
+        }
+
+        private static LevelEvent FindLastEvent(scnEditor editor, int floorNumber, LevelEventType type)
+        {
+            if (editor == null || editor.events == null) return null;
+            for (int i = editor.events.Count - 1; i >= 0; i--)
+            {
+                LevelEvent ev = editor.events[i];
+                if (ev != null && ev.floor == floorNumber && ev.eventType == type)
+                    return ev;
+            }
+            return null;
+        }
+
+        private static int FindRawFloorIndex(scnEditor editor, scrFloor target)
+        {
+            if (editor == null || editor.floors == null || target == null) return -1;
+            for (int i = 0; i < editor.floors.Count; i++)
+                if (ReferenceEquals(editor.floors[i], target)) return i;
+            return -1;
+        }
+
+        private static LevelEvent CreateStarterTile(LevelEvent firstPreview, SourcePreviewTrack source)
+        {
+            LevelEvent starter = firstPreview.Copy();
+            if (starter == null)
+                throw new InvalidOperationException("Could not clone the generated first Floor preview for the 180° starter tile.");
+
+            string baseTag = "T" + source.TrackIndex;
+            SetTypedData(starter, "tag",
+                baseTag + " " + baseTag + "_starter qolMultiTile_" + baseTag + " "
+                + OwnerTag + " " + StarterTag);
+
+            Vector2 firstPosition = ReadVector2Data(firstPreview, "position", Vector2.zero);
+            SetTypedData(starter, "position", firstPosition + source.StarterOffset);
+            SetTypedData(starter, "trackAngle", 180f);
+            SetTypedData(starter, "rotation", source.StarterRotationDegrees);
+
+            SetOptionalTypedData(starter, "trackIcon", "None");
+            SetOptionalTypedData(starter, "trackIconAngle", 0f);
+            SetOptionalTypedData(starter, "trackIconFlipped", false);
+            SetOptionalTypedData(starter, "trackIconOutlines", false);
+            SetOptionalTypedData(starter, "trackRedSwirl", false);
+            SetOptionalTypedData(starter, "trackGraySetSpeedIcon", false);
+            return starter;
+        }
+
+        private static void RemoveOwnedStarterTiles(IList decorations)
+        {
+            if (decorations == null) return;
+            for (int i = decorations.Count - 1; i >= 0; i--)
+            {
+                LevelEvent ev = decorations[i] as LevelEvent;
+                if (ev == null || !IsEventNamed(ev, "AddObject")) continue;
+                string tag = Convert.ToString(SafeGetData(ev, "tag"), CultureInfo.InvariantCulture) ?? "";
+                if (ContainsTagToken(tag, OwnerTag) && ContainsTagToken(tag, StarterTag))
+                    decorations.RemoveAt(i);
+            }
         }
 
         private static LevelEvent FindOwnedPreview(IList decorations, int trackIndex, int tileIndex)
@@ -196,42 +356,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             for (int i = 0; i < split.Length; i++)
                 if (string.Equals(split[i], token, StringComparison.Ordinal)) return true;
             return false;
-        }
-
-        private static string ReadIconName(object floor)
-        {
-            string[] names = { "trackIcon", "floorIcon", "speedIcon" };
-            for (int i = 0; i < names.Length; i++)
-            {
-                object value = ReadMember(floor, names[i]);
-                if (value == null) continue;
-                Type type = value.GetType();
-                if (value is string || type.IsEnum)
-                {
-                    string text = Convert.ToString(value, CultureInfo.InvariantCulture);
-                    if (!string.IsNullOrWhiteSpace(text)) return text.Trim();
-                }
-            }
-            return null;
-        }
-
-        private static string SpeedIcon(double previousSpeed, double speed)
-        {
-            if (previousSpeed <= SpeedEpsilon || speed <= SpeedEpsilon) return "None";
-            double ratio = speed / previousSpeed;
-            if (Math.Abs(ratio - 2.0) <= SpeedEpsilon) return "DoubleRabbit";
-            if (Math.Abs(ratio - 0.5) <= SpeedEpsilon) return "DoubleSnail";
-            if (ratio > 1.0 + SpeedEpsilon) return "Rabbit";
-            if (ratio < 1.0 - SpeedEpsilon) return "Snail";
-            return "None";
-        }
-
-        private static bool IsSpeedIcon(string icon)
-        {
-            return string.Equals(icon, "Rabbit", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(icon, "Snail", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(icon, "DoubleRabbit", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(icon, "DoubleSnail", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsEventNamed(LevelEvent ev, string requestedName)
@@ -315,6 +439,26 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             try { return ev[key]; } catch { return null; }
         }
 
+        private static Vector2 ReadVector2Data(LevelEvent ev, string key, Vector2 fallback)
+        {
+            object value = SafeGetData(ev, key);
+            if (value is Vector2) return (Vector2)value;
+            if (value is Vector3)
+            {
+                Vector3 v = (Vector3)value;
+                return new Vector2(v.x, v.y);
+            }
+            return fallback;
+        }
+
+        private static float ReadFloatData(LevelEvent ev, string key, float fallback)
+        {
+            object value = SafeGetData(ev, key);
+            if (value == null) return fallback;
+            try { return Convert.ToSingle(value, CultureInfo.InvariantCulture); }
+            catch { return fallback; }
+        }
+
         private static object ReadMember(object target, string name)
         {
             if (target == null) return null;
@@ -343,15 +487,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             catch { return fallback; }
         }
 
-        private static bool ReadBool(object target, string name, bool fallback)
-        {
-            object value = ReadMember(target, name);
-            if (value == null) return fallback;
-            if (value is bool) return (bool)value;
-            bool parsed;
-            return bool.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), out parsed) ? parsed : fallback;
-        }
-
         private static float ResolveTileSize()
         {
             float tileSize = ADOBase.controller == null ? 1f : ADOBase.controller.tileSize;
@@ -367,6 +502,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private sealed class SourcePreviewTrack
         {
             internal int TrackIndex;
+            internal bool HasStarterTile;
+            internal Vector2 StarterOffset;
+            internal float StarterRotationDegrees;
             internal readonly List<SourcePreviewTile> Tiles = new List<SourcePreviewTile>();
         }
 
@@ -374,12 +512,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             internal string TrackIcon;
             internal float TrackIconAngle;
+            internal bool UsePreviewRotationForIcon;
             internal bool TrackIconFlipped;
             internal bool TrackIconOutlines;
+            internal bool TrackRedSwirl;
             internal bool TrackGraySetSpeedIcon;
             internal double TrackSetSpeedIconBpm;
-            internal bool ForceStarter180;
-            internal float StarterRotationDegrees;
         }
     }
 }
