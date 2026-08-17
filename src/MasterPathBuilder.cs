@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
@@ -9,6 +10,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 {
     internal sealed class MasterPathPreview
     {
+        // Region-only angleData appended after the preserved prefix.
         internal readonly List<float> AngleData = new List<float>();
         internal readonly List<double> RuntimeAnchorBeats = new List<double>();
         internal int RuntimeFloorCount;
@@ -28,7 +30,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (editor == null || editor.levelData == null)
                 throw new InvalidOperationException("Editor is not ready.");
             if (plan == null || plan.Anchors.Count < 2)
-                throw new InvalidOperationException("Analyze a whole-region plan before building the master path.");
+                throw new InvalidOperationException("Analyze a region plan before building the master path.");
+            if (editor.levelData.angleData == null || editor.levelData.angleData.Count < plan.RegionStartFloor)
+                throw new InvalidOperationException("The active chart no longer contains the shared prefix through F" + plan.RegionStartFloor + ".");
 
             var preview = new MasterPathPreview();
             SynthesizeAngleData(plan, preview.AngleData);
@@ -40,11 +44,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 LevelData candidate = original.Copy();
                 candidate.isOldLevel = false;
-                candidate.angleData.Clear();
-                for (int i = 0; i < preview.AngleData.Count; i++)
-                    candidate.angleData.Add(preview.AngleData[i]);
-
-                candidate.levelEvents.Clear();
+                ReplaceRegionAngleData(candidate.angleData, original.angleData, plan.RegionStartFloor, preview.AngleData);
+                RemoveEventsAtOrAfter(candidate.levelEvents as IList, plan.RegionStartFloor);
 
                 TrackStore.RestoreSnapshot(editor, candidate, false);
                 VerifyRuntime(editor, plan, preview);
@@ -56,8 +57,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     editor.SelectFloor(editor.floors[selectedFloor], true);
             }
 
-            preview.Diagnostic = "Master path OK: " + preview.AngleData.Count + " angleData value(s) -> "
-                + preview.RuntimeFloorCount + " runtime anchor floor(s), max angle error "
+            preview.Diagnostic = "Master region OK: preserved prefix through F" + plan.RegionStartFloor + "; "
+                + preview.AngleData.Count + " synthesized angleData value(s) -> "
+                + preview.RuntimeFloorCount + " region anchor floor(s), max angle error "
                 + preview.MaxAngleErrorDegrees.ToString("0.######", CultureInfo.InvariantCulture) + "°, max beat error "
                 + preview.MaxBeatError.ToString("0.0e+0", CultureInfo.InvariantCulture)
                 + ". Active chart restored unchanged.";
@@ -71,10 +73,23 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             VerifyRuntime(editor, plan, preview);
         }
 
+        internal static void ReplaceRegionAngleData(IList<float> target, IList<float> sourcePrefix, int regionStartFloor, IList<float> regionAngles)
+        {
+            if (target == null || sourcePrefix == null || regionAngles == null)
+                throw new InvalidOperationException("Master path angleData inputs are unavailable.");
+            if (regionStartFloor < 0 || sourcePrefix.Count < regionStartFloor)
+                throw new InvalidOperationException("The source prefix is shorter than the Multi Tile start floor.");
+
+            target.Clear();
+            for (int i = 0; i < regionStartFloor; i++) target.Add(sourcePrefix[i]);
+            for (int i = 0; i < regionAngles.Count; i++) target.Add(regionAngles[i]);
+        }
+
         private static void SynthesizeAngleData(GenerationPlan plan, IList<float> output)
         {
             output.Clear();
-            double previousHeading = 0.0;
+            double previousHeading = plan.RegionStartHeading;
+            bool inheritedIsCCW = plan.RegionInheritedIsCCW;
 
             for (int i = 0; i + 1 < plan.Anchors.Count; i++)
             {
@@ -88,10 +103,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     throw new InvalidOperationException(
                         "Master interval M" + i + " -> M" + (i + 1) + " requires "
                         + travelDegrees.ToString("0.###", CultureInfo.InvariantCulture)
-                        + "°. v0.6 path synthesis currently supports at most 360° per anchor interval; helper/midspin floor insertion is not implemented yet.");
+                        + "°. Current path synthesis supports at most 360° per anchor interval; helper/midspin insertion is not implemented yet.");
                 }
 
-                double heading = NormalizeDegrees(previousHeading + 180.0 - travelDegrees);
+                double heading = inheritedIsCCW
+                    ? NormalizeDegrees(previousHeading - 180.0 + travelDegrees)
+                    : NormalizeDegrees(previousHeading + 180.0 - travelDegrees);
                 if (heading < 0.0001 || heading > 359.9999) heading = 0.0;
                 output.Add((float)heading);
                 previousHeading = heading;
@@ -100,21 +117,26 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static void VerifyRuntime(scnEditor editor, GenerationPlan plan, MasterPathPreview preview)
         {
-            var floors = new List<object>();
+            var allFloors = new List<object>();
             for (int i = 0; i < editor.floors.Count; i++)
             {
                 object floor = editor.floors[i];
-                if (floor == null) continue;
-                if (ReadBool(floor, "midSpin", false)) continue;
-                floors.Add(floor);
+                if (floor == null || ReadBool(floor, "midSpin", false)) continue;
+                allFloors.Add(floor);
             }
 
-            preview.RuntimeFloorCount = floors.Count;
-            if (floors.Count != plan.Anchors.Count)
+            int regionIndex = FindRegionFloorIndex(editor, allFloors, plan.RegionStartFloor);
+            if (regionIndex < 0)
+                throw new InvalidOperationException("Synthesized path lost the Multi Tile start floor F" + plan.RegionStartFloor + ".");
+
+            int regionFloorCount = allFloors.Count - regionIndex;
+            preview.RuntimeFloorCount = regionFloorCount;
+            if (regionFloorCount != plan.Anchors.Count)
             {
                 throw new InvalidOperationException(
-                    "Synthesized path produced " + floors.Count + " non-midspin runtime floors, but the master timeline has "
-                    + plan.Anchors.Count + " anchors. Expected angleData count=" + (plan.Anchors.Count - 1) + ".");
+                    "Synthesized region produced " + regionFloorCount + " non-midspin runtime floors from F" + plan.RegionStartFloor
+                    + ", but the master timeline has " + plan.Anchors.Count + " anchors. Expected region angleData count="
+                    + (plan.Anchors.Count - 1) + ".");
             }
 
             preview.RuntimeAnchorBeats.Clear();
@@ -123,14 +145,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             double maxAngleError = 0.0;
             double maxBeatError = 0.0;
 
+            object firstFloor = allFloors[regionIndex];
             double firstEntryBeat;
-            bool haveFirstEntryBeat = TryReadDouble(floors[0], "entryBeat", out firstEntryBeat);
+            bool haveFirstEntryBeat = TryReadDouble(firstFloor, "entryBeat", out firstEntryBeat);
 
-            for (int i = 0; i + 1 < floors.Count; i++)
+            for (int i = 0; i + 1 < regionFloorCount; i++)
             {
+                object floor = allFloors[regionIndex + i];
                 double radians;
-                if (!TryReadDouble(floors[i], "angleLength", out radians))
-                    throw new InvalidOperationException("Synthesized runtime floor F" + ReadFloorId(floors[i], i) + " has no readable angleLength.");
+                if (!TryReadDouble(floor, "angleLength", out radians))
+                    throw new InvalidOperationException("Synthesized runtime floor F" + ReadFloorId(floor, plan.RegionStartFloor + i) + " has no readable angleLength.");
 
                 double actualDegrees = Math.Abs(radians * Mathf.Rad2Deg);
                 double targetDegrees = (plan.Anchors[i + 1].Beat - plan.Anchors[i].Beat) * 180.0;
@@ -139,7 +163,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (angleError > AngleToleranceDegrees)
                 {
                     throw new InvalidOperationException(
-                        "Master path verification failed at M" + i + ": target travel "
+                        "Master region verification failed at M" + i + ": target travel "
                         + targetDegrees.ToString("0.######", CultureInfo.InvariantCulture) + "°, stock angleLength gives "
                         + actualDegrees.ToString("0.######", CultureInfo.InvariantCulture) + "°."
                         + " Synthesized heading=" + preview.AngleData[i].ToString("0.######", CultureInfo.InvariantCulture) + "°.");
@@ -153,7 +177,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (cumulativeError > BeatVerificationTolerance)
                 {
                     throw new InvalidOperationException(
-                        "Master path cumulative timing drift at M" + (i + 1) + ": target "
+                        "Master region cumulative timing drift at M" + (i + 1) + ": target "
                         + targetCumulativeBeat.ToString("0.######", CultureInfo.InvariantCulture) + " beats, stock path gives "
                         + cumulativeBeat.ToString("0.######", CultureInfo.InvariantCulture) + " beats.");
                 }
@@ -161,7 +185,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (haveFirstEntryBeat)
                 {
                     double entryBeat;
-                    if (TryReadDouble(floors[i], "entryBeat", out entryBeat))
+                    if (TryReadDouble(floor, "entryBeat", out entryBeat))
                     {
                         double relativeEntry = entryBeat - firstEntryBeat;
                         double targetEntry = plan.Anchors[i].Beat - plan.StartBeat;
@@ -170,7 +194,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         if (entryError > BeatVerificationTolerance)
                         {
                             throw new InvalidOperationException(
-                                "Master path entryBeat mismatch at M" + i + ": target "
+                                "Master region entryBeat mismatch at M" + i + ": target "
                                 + targetEntry.ToString("0.######", CultureInfo.InvariantCulture) + ", stock entryBeat gives "
                                 + relativeEntry.ToString("0.######", CultureInfo.InvariantCulture) + ".");
                         }
@@ -180,6 +204,42 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             preview.MaxAngleErrorDegrees = maxAngleError;
             preview.MaxBeatError = maxBeatError;
+        }
+
+        private static int FindRegionFloorIndex(scnEditor editor, IList<object> filteredFloors, int regionStartFloor)
+        {
+            if (editor.floors != null && regionStartFloor >= 0 && regionStartFloor < editor.floors.Count)
+            {
+                object raw = editor.floors[regionStartFloor];
+                for (int i = 0; i < filteredFloors.Count; i++)
+                    if (ReferenceEquals(filteredFloors[i], raw)) return i;
+            }
+            for (int i = 0; i < filteredFloors.Count; i++)
+                if (ReadFloorId(filteredFloors[i], -1) == regionStartFloor) return i;
+            return -1;
+        }
+
+        private static void RemoveEventsAtOrAfter(IList events, int regionStartFloor)
+        {
+            if (events == null) return;
+            for (int i = events.Count - 1; i >= 0; i--)
+            {
+                int floor;
+                if (!TryReadInt(events[i], "floor", out floor)) continue;
+                if (floor >= regionStartFloor) events.RemoveAt(i);
+            }
+        }
+
+        private static bool TryReadInt(object target, string name, out int result)
+        {
+            object value = ReadMember(target, name);
+            try
+            {
+                if (value != null) { result = Convert.ToInt32(value, CultureInfo.InvariantCulture); return true; }
+            }
+            catch { }
+            result = -1;
+            return false;
         }
 
         private static double NormalizeDegrees(double degrees)
