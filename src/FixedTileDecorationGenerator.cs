@@ -153,13 +153,17 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 TrackIndex = trackIndex,
                 Name = slot.Name ?? ("Track " + (trackIndex + 1)),
                 BaseBpm = editor.levelData.bpm,
-                InitialStepOffset = Vector2.right
+                InitialStepOffset = Vector2.right,
+                ForwardStepOffset = Vector2.right
             };
 
             if (regionIndex < 0 || regionIndex + 1 >= floors.Count) return visual;
 
             float tileSize = ResolveTileSize();
             Vector2 startPosition = ToLevelPosition(floors[regionIndex], tileSize);
+            Vector2 firstPosition = ToLevelPosition(floors[regionIndex + 1], tileSize);
+            Vector2 forwardStep = firstPosition - startPosition;
+            if (forwardStep.sqrMagnitude > 1.0e-8f) visual.ForwardStepOffset = forwardStep;
 
             // Starting in the middle of a chart is different from starting at F0.
             // At a landed floor, the non-pivot planet is still on the incoming/previous
@@ -174,9 +178,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
             else
             {
-                Vector2 firstPosition = ToLevelPosition(floors[regionIndex + 1], tileSize);
-                Vector2 initialStep = firstPosition - startPosition;
-                if (initialStep.sqrMagnitude > 1.0e-8f) visual.InitialStepOffset = initialStep;
+                visual.InitialStepOffset = visual.ForwardStepOffset;
             }
 
             // F0 has no incoming tile and keeps the historical endpoint-only preview.
@@ -225,13 +227,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 LevelEvent moving = slot.PivotIsA ? planetB : planetA;
                 Vector2 center = GetPreviewOrigin(i);
                 Vector2 legacyMoving = center + Vector2.left;
+                Vector2 oldForwardMoving = center + visual.ForwardStepOffset;
                 Vector2 desiredMoving = center + visual.InitialStepOffset;
 
                 if (!IsTileRelativePlanet(planetA) || !IsTileRelativePlanet(planetB)) continue;
                 if (!Approximately(ReadVector2(pivot, "position", new Vector2(float.NaN, float.NaN)), center)) continue;
 
                 Vector2 movingPosition = ReadVector2(moving, "position", new Vector2(float.NaN, float.NaN));
-                if (!Approximately(movingPosition, legacyMoving) && !Approximately(movingPosition, desiredMoving)) continue;
+                if (!Approximately(movingPosition, legacyMoving)
+                    && !Approximately(movingPosition, oldForwardMoving)
+                    && !Approximately(movingPosition, desiredMoving)) continue;
 
                 SetTypedData(pivot, "position", center);
                 SetTypedData(moving, "position", desiredMoving);
@@ -556,6 +561,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             internal string Name;
             internal double BaseBpm;
             internal Vector2 InitialStepOffset;
+            internal Vector2 ForwardStepOffset;
             internal readonly List<VisualTile> Tiles = new List<VisualTile>();
         }
 
