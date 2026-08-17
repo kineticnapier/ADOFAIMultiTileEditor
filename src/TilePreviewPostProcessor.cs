@@ -416,8 +416,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 ShiftPlanetToFloor(editor, planetA, preRollFloorIndex);
                 ShiftPlanetToFloor(editor, planetB, preRollFloorIndex);
 
-                string movingTag = track.InitialPivotIsA ? track.PlanetBTag : track.PlanetATag;
-                string centerTag = track.InitialPivotIsA ? track.PlanetATag : track.PlanetBTag;
+                // The pre-roll is the immediately preceding two-planet step, so its
+                // pivot is the opposite planet from the first generated Multi Tile step.
+                string movingTag = track.InitialPivotIsA ? track.PlanetATag : track.PlanetBTag;
+                string centerTag = track.InitialPivotIsA ? track.PlanetBTag : track.PlanetATag;
                 LevelEvent orbit = orbitTemplate.Copy();
                 if (orbit == null) continue;
 
@@ -494,7 +496,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
                 double speed = ReadDouble(floor, "speed", 1.0);
                 if (Math.Abs(speed - prefixSpeed) > SpeedEpsilon)
-                    break; // Keep the pre-roll in one constant-speed prefix section.
+                    break;
 
                 double travelDegrees = Math.Abs(ReadDouble(floor, "angleLength", 0.0) * Mathf.Rad2Deg);
                 double floorBeats = travelDegrees / 180.0;
