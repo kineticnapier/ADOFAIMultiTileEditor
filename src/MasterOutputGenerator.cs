@@ -3,13 +3,10 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using ADOFAI;
+using R = System.Reflection;
 
 namespace KineticNapier.ADOFAIMultiTileEditor
 {
-    // Source tracks may have completely different SetSpeed maps. TrackAnalyzer has
-    // already converted them into one constant-BPM master timeline. LevelData.bpm is
-    // read-only in current ADOFAI builds, so the output keeps the chart's base BPM and
-    // installs one absolute SetSpeed at floor 0 to establish the selected master BPM.
     internal static class MasterOutputGenerator
     {
         internal static OrbitCommitResult GenerateAndCommit(
@@ -35,20 +32,34 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (events == null)
                     throw new InvalidOperationException("LevelData.levelEvents is not list-compatible in this game build.");
 
-                int removedSetSpeed = RemoveSetSpeedActions(events);
-                LevelEvent masterSpeed = CreateSetSpeedEvent(plan.MasterBpm);
-                events.Add(masterSpeed);
+                int removedSetSpeed = RemoveSetSpeedActions(events, plan.RegionStartFloor);
+
+                if (plan.RegionStartFloor == 0)
+                {
+                    double baseBpm = Convert.ToDouble(normalized.bpm, CultureInfo.InvariantCulture);
+                    if (Math.Abs(baseBpm - plan.MasterBpm) > 1.0e-4)
+                    {
+                        throw new InvalidOperationException(
+                            "The Multi Tile region starts at F0, where ADOFAI cannot host the generated timing normalization. "
+                            + "Choose a later region start, or use source timings whose normalized master BPM equals the level base BPM.");
+                    }
+                }
+                else
+                {
+                    events.Add(CreateSetSpeedEvent(plan.MasterBpm, plan.RegionStartFloor));
+                }
 
                 TrackStore.RestoreSnapshot(editor, normalized, true);
-                VerifyMasterSetSpeed(editor.levelData.levelEvents as IList, plan.MasterBpm);
+                if (plan.RegionStartFloor > 0)
+                    VerifyMasterSetSpeed(editor.levelData.levelEvents as IList, plan.MasterBpm, plan.RegionStartFloor);
 
                 OrbitCommitResult result = PACL2AutoGenerator.GenerateAndCommit(
                     editor, plan, preview, tracks, baseTrackIndex);
 
                 result.Diagnostic += " Master timing uses constant "
                     + plan.MasterBpm.ToString("0.######", CultureInfo.InvariantCulture)
-                    + " BPM via a floor-0 SetSpeed; replaced " + removedSetSpeed
-                    + " source/base SetSpeed action(s) because their timing is already baked into the merged real-time timeline.";
+                    + " BPM from F" + plan.RegionStartFloor + "; replaced " + removedSetSpeed
+                    + " source/base SetSpeed action(s) inside the region while preserving earlier timing events.";
 
                 success = true;
                 return result;
@@ -64,11 +75,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
         }
 
-        private static LevelEvent CreateSetSpeedEvent(double bpm)
+        private static LevelEvent CreateSetSpeedEvent(double bpm, int floor)
         {
             LevelEventInfo info = ResolveEventInfo("SetSpeed");
-            LevelEvent ev = new LevelEvent(0, info.type, info);
-
+            LevelEvent ev = new LevelEvent(floor, info.type, info);
             SetRequiredData(ev, "speedType", "Bpm");
             SetRequiredData(ev, "beatsPerMinute", bpm);
             SetOptionalData(ev, "bpmMultiplier", 1.0);
@@ -82,34 +92,27 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             if (GCS.levelEventsInfo == null)
                 throw new InvalidOperationException("ADOFAI level-event metadata is not initialized.");
-
             LevelEventInfo direct;
-            if (GCS.levelEventsInfo.TryGetValue(requestedName, out direct) && direct != null)
-                return direct;
-
+            if (GCS.levelEventsInfo.TryGetValue(requestedName, out direct) && direct != null) return direct;
             foreach (KeyValuePair<string, LevelEventInfo> pair in GCS.levelEventsInfo)
             {
                 if (pair.Value == null) continue;
                 if (string.Equals(pair.Key, requestedName, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(pair.Value.name, requestedName, StringComparison.OrdinalIgnoreCase))
-                    return pair.Value;
+                    || string.Equals(pair.Value.name, requestedName, StringComparison.OrdinalIgnoreCase)) return pair.Value;
             }
-
             throw new InvalidOperationException("Stock SetSpeed event metadata is unavailable in this ADOFAI build.");
         }
 
         private static void SetRequiredData(LevelEvent ev, string key, object value)
         {
-            if (ev == null || ev.info == null || ev.info.propertiesInfo == null
-                || !ev.info.propertiesInfo.ContainsKey(key))
+            if (ev == null || ev.info == null || ev.info.propertiesInfo == null || !ev.info.propertiesInfo.ContainsKey(key))
                 throw new InvalidOperationException("SetSpeed metadata has no property '" + key + "'.");
             SetTypedData(ev, key, value);
         }
 
         private static void SetOptionalData(LevelEvent ev, string key, object value)
         {
-            if (ev == null || ev.info == null || ev.info.propertiesInfo == null
-                || !ev.info.propertiesInfo.ContainsKey(key)) return;
+            if (ev == null || ev.info == null || ev.info.propertiesInfo == null || !ev.info.propertiesInfo.ContainsKey(key)) return;
             SetTypedData(ev, key, value);
         }
 
@@ -117,7 +120,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             object current = SafeGetData(ev, key);
             Type targetType = current != null ? current.GetType() : null;
-
             if (targetType == null && ev.info != null && ev.info.propertiesInfo != null)
             {
                 ADOFAI.PropertyInfo propertyInfo;
@@ -125,7 +127,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     && propertyInfo != null && propertyInfo.value_default != null)
                     targetType = propertyInfo.value_default.GetType();
             }
-
             ev[key] = targetType == null ? value : ConvertFor(value, targetType);
             if (ev.disabled != null && ev.disabled.ContainsKey(key)) ev.disabled[key] = false;
         }
@@ -140,44 +141,39 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 string text = Convert.ToString(value, CultureInfo.InvariantCulture);
                 return Enum.Parse(actual, text, true);
             }
-            if (actual == typeof(string))
-                return Convert.ToString(value, CultureInfo.InvariantCulture);
+            if (actual == typeof(string)) return Convert.ToString(value, CultureInfo.InvariantCulture);
             return Convert.ChangeType(value, actual, CultureInfo.InvariantCulture);
         }
 
         private static object SafeGetData(LevelEvent ev, string key)
         {
             if (ev == null) return null;
-            try { return ev[key]; }
-            catch { return null; }
+            try { return ev[key]; } catch { return null; }
         }
 
-        private static void VerifyMasterSetSpeed(IList events, double expectedBpm)
+        private static void VerifyMasterSetSpeed(IList events, double expectedBpm, int expectedFloor)
         {
             if (events == null)
                 throw new InvalidOperationException("Stock restore lost the level event list while applying master timing.");
-
             for (int i = 0; i < events.Count; i++)
             {
                 LevelEvent ev = events[i] as LevelEvent;
                 if (ev == null || !IsSetSpeed(ev)) continue;
-
+                int floor;
+                if (!TryReadFloor(ev, out floor) || floor != expectedFloor) continue;
                 string speedType = Convert.ToString(SafeGetData(ev, "speedType"), CultureInfo.InvariantCulture) ?? "";
                 double bpm;
                 try { bpm = Convert.ToDouble(SafeGetData(ev, "beatsPerMinute"), CultureInfo.InvariantCulture); }
                 catch { continue; }
-
                 if (string.Equals(speedType, "Bpm", StringComparison.OrdinalIgnoreCase)
-                    && Math.Abs(bpm - expectedBpm) <= 1.0e-4)
-                    return;
+                    && Math.Abs(bpm - expectedBpm) <= 1.0e-4) return;
             }
-
             throw new InvalidOperationException(
-                "The generated floor-0 SetSpeed did not survive stock reconstruction at "
+                "The generated F" + expectedFloor + " SetSpeed did not survive stock reconstruction at "
                 + expectedBpm.ToString("0.######", CultureInfo.InvariantCulture) + " BPM.");
         }
 
-        private static int RemoveSetSpeedActions(IList events)
+        private static int RemoveSetSpeedActions(IList events, int regionStartFloor)
         {
             if (events == null) return 0;
             int removed = 0;
@@ -185,23 +181,48 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 LevelEvent ev = events[i] as LevelEvent;
                 if (ev == null || !IsSetSpeed(ev)) continue;
+                int floor;
+                if (!TryReadFloor(ev, out floor) || floor < regionStartFloor) continue;
                 events.RemoveAt(i);
                 removed++;
             }
             return removed;
         }
 
+        private static bool TryReadFloor(LevelEvent ev, out int floor)
+        {
+            floor = -1;
+            if (ev == null) return false;
+            Type type = ev.GetType();
+            const R.BindingFlags flags = R.BindingFlags.Instance | R.BindingFlags.Public | R.BindingFlags.NonPublic;
+            try
+            {
+                R.PropertyInfo p = type.GetProperty("floor", flags) ?? type.GetProperty("floorIndex", flags);
+                if (p != null && p.GetIndexParameters().Length == 0)
+                {
+                    floor = Convert.ToInt32(p.GetValue(ev, null), CultureInfo.InvariantCulture);
+                    return true;
+                }
+            }
+            catch { }
+            try
+            {
+                R.FieldInfo f = type.GetField("floor", flags) ?? type.GetField("floorIndex", flags);
+                if (f != null)
+                {
+                    floor = Convert.ToInt32(f.GetValue(ev), CultureInfo.InvariantCulture);
+                    return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
         private static bool IsSetSpeed(LevelEvent ev)
         {
-            string name = ev != null && ev.info != null
-                ? (ev.info.name ?? string.Empty)
-                : string.Empty;
-            if (string.Equals(name, "SetSpeed", StringComparison.OrdinalIgnoreCase))
-                return true;
-
-            string eventType = ev == null
-                ? string.Empty
-                : Convert.ToString(ev.eventType, CultureInfo.InvariantCulture) ?? string.Empty;
+            string name = ev != null && ev.info != null ? (ev.info.name ?? string.Empty) : string.Empty;
+            if (string.Equals(name, "SetSpeed", StringComparison.OrdinalIgnoreCase)) return true;
+            string eventType = ev == null ? string.Empty : Convert.ToString(ev.eventType, CultureInfo.InvariantCulture) ?? string.Empty;
             return string.Equals(eventType, "SetSpeed", StringComparison.OrdinalIgnoreCase);
         }
     }
