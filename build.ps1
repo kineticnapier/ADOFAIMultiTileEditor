@@ -44,13 +44,18 @@ if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
 $dll = Join-Path $PSScriptRoot "src\bin\$Configuration\ADOFAIMultiTileEditor.dll"
 if (-not (Test-Path $dll)) { throw "Expected DLL was not produced: $dll" }
 
+$infoPath = Join-Path $PSScriptRoot "Info.json"
+$info = Get-Content $infoPath -Raw | ConvertFrom-Json
+$version = [string]$info.Version
+if ([string]::IsNullOrWhiteSpace($version)) { throw "Info.json does not contain a valid Version." }
+
 $out = Join-Path $PSScriptRoot "release\ADOFAIMultiTileEditor"
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 Copy-Item $dll $out
-Copy-Item (Join-Path $PSScriptRoot "Info.json") $out
+Copy-Item $infoPath $out
 
-$zip = Join-Path $PSScriptRoot "ADOFAIMultiTileEditor-v0.8.0.zip"
+$zip = Join-Path $PSScriptRoot ("ADOFAIMultiTileEditor-v{0}.zip" -f $version)
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip
 Write-Host "Built: $zip"
