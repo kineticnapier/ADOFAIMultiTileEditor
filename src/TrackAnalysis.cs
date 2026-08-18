@@ -25,6 +25,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal double EffectiveBpm;
 
         internal double AmountDegrees;
+        internal double SourceAmountDegrees;
+        internal double DestinationRadiusMultiplier = 1.0;
+        internal bool PositionGeometryInitialized;
+        internal bool PositionGeometryApplied;
         internal string AngleSource;
         internal string MovingTag;
         internal string CenterTag;
