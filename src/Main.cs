@@ -6,6 +6,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 {
     public static class Main
     {
+        internal const string ModVersion = "0.10.1";
+
         private static UnityModManager.ModEntry.ModLogger logger;
         private static readonly TrackStore store = new TrackStore();
 
@@ -16,9 +18,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static string status = "Select the floor where Multi Tile should begin, then store each source chart as a track.";
         private static bool lastActionFailed;
         private static bool showAdvanced;
+        private static MultiTileOverlay overlay;
 
         private static GenerationPlan lastPlan;
         private static MasterPathPreview lastPathPreview;
+
+        internal static bool OverlayCanDraw
+        {
+            get { return enabled && ADOBase.editor != null; }
+        }
 
         public static bool Load(UnityModManager.ModEntry entry)
         {
@@ -26,13 +34,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             entry.OnToggle = OnToggle;
             entry.OnGUI = OnGUI;
             entry.OnUpdate = OnUpdate;
-            logger.Log("ADOFAI Multi Tile Editor Prototype v0.10.0 loaded.");
+            EnsureOverlay();
+            logger.Log("ADOFAI Multi Tile Editor v" + ModVersion + " loaded.");
             return true;
         }
 
         private static bool OnToggle(UnityModManager.ModEntry entry, bool value)
         {
             enabled = value;
+            EnsureOverlay();
+            if (overlay != null) overlay.enabled = value;
             return true;
         }
 
@@ -56,7 +67,23 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static void OnGUI(UnityModManager.ModEntry entry)
         {
-            GUILayout.Label("Multi Tile Editor v0.10.0");
+            GUILayout.Label("Multi Tile Editor v" + ModVersion);
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Editor overlay", GUILayout.Width(90f));
+            if (overlay != null)
+            {
+                if (GUILayout.Button(overlay.Visible ? "Hide" : "Show", GUILayout.Width(65f)))
+                    overlay.Visible = !overlay.Visible;
+                if (GUILayout.Button("Reset position", GUILayout.Width(105f)))
+                    overlay.ResetPosition();
+            }
+            else
+            {
+                GUILayout.Label("unavailable");
+            }
+            GUILayout.EndHorizontal();
+
             scnEditor editor = ADOBase.editor;
             if (editor == null)
             {
@@ -88,31 +115,83 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 DrawAdvanced(editor);
         }
 
-        private static void DrawTrackTabs(scnEditor editor)
+        internal static void DrawOverlayContents()
         {
-            GUILayout.BeginHorizontal();
-
-            for (int i = 0; i < store.Tracks.Count; i++)
+            scnEditor editor = ADOBase.editor;
+            if (editor == null)
             {
-                TrackSlot track = store.Tracks[i];
-                string label = (i == store.ActiveIndex ? "> " : "") + ShortTrackName(track, i);
-
-                GUI.enabled = i != store.ActiveIndex;
-                if (GUILayout.Button(label, GUILayout.Width(112f)))
-                {
-                    int target = i;
-                    Try(delegate
-                    {
-                        store.SwitchTo(editor, target);
-                        InvalidatePlan();
-                        status = "Switched to " + store.Tracks[target].Name + ".";
-                    });
-                }
-                GUI.enabled = true;
+                GUILayout.Label("Level editor is not active.");
+                return;
             }
 
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Quick editor", GUILayout.Width(75f));
             GUILayout.FlexibleSpace();
+            if (GUILayout.Button("Hide", GUILayout.Width(55f)) && overlay != null)
+                overlay.Visible = false;
             GUILayout.EndHorizontal();
+
+            DrawTrackTabs(editor);
+            GUILayout.Space(4f);
+
+            if (store.ActiveIndex >= 0 && store.ActiveIndex < store.Tracks.Count)
+                DrawActiveTrack(editor, store.Tracks[store.ActiveIndex], store.ActiveIndex);
+            else if (store.Tracks.Count > 0)
+                GUILayout.Label("Output detached. Select a track tab to resume source editing.");
+            else
+                GUILayout.Label("Select the Multi Tile start floor, then store the first source track.");
+
+            GUILayout.Space(5f);
+            DrawGenerationControls(editor);
+            GUILayout.Space(4f);
+            DrawStatus();
+            GUILayout.Label("Detailed diagnostics remain available in Unity Mod Manager.");
+        }
+
+        private static void EnsureOverlay()
+        {
+            if (overlay != null) return;
+            try
+            {
+                GameObject host = new GameObject("ADOFAIMultiTileEditorOverlay");
+                UnityEngine.Object.DontDestroyOnLoad(host);
+                overlay = host.AddComponent<MultiTileOverlay>();
+                overlay.enabled = enabled;
+            }
+            catch (Exception ex)
+            {
+                if (logger != null) logger.Error("Could not create Multi Tile overlay: " + ex);
+            }
+        }
+
+        private static void DrawTrackTabs(scnEditor editor)
+        {
+            const int tabsPerRow = 5;
+            for (int rowStart = 0; rowStart < store.Tracks.Count; rowStart += tabsPerRow)
+            {
+                GUILayout.BeginHorizontal();
+                int rowEnd = Math.Min(store.Tracks.Count, rowStart + tabsPerRow);
+                for (int i = rowStart; i < rowEnd; i++)
+                {
+                    TrackSlot track = store.Tracks[i];
+                    string label = (i == store.ActiveIndex ? "> " : "") + ShortTrackName(track, i);
+
+                    GUI.enabled = i != store.ActiveIndex;
+                    if (GUILayout.Button(label, GUILayout.Width(112f)))
+                    {
+                        int target = i;
+                        Try(delegate
+                        {
+                            store.SwitchTo(editor, target);
+                            InvalidatePlan();
+                            status = "Switched to " + store.Tracks[target].Name + ".";
+                        });
+                    }
+                    GUI.enabled = true;
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("New track", GUILayout.Width(70f));
