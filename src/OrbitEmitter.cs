@@ -12,6 +12,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal int Emitted;
         internal int Replaced;
         internal int RemappedBaseEvents;
+        internal int PositionAdjusted;
         internal string Diagnostic;
     }
 
@@ -34,6 +35,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (preview.AngleData.Count + 1 != plan.Anchors.Count)
                 throw new InvalidOperationException("Verified master region no longer matches the analyzed plan.");
 
+            int positionAdjusted = PositionGeometryPlanner.Apply(editor, tracks, plan);
             ValidateBasePath(editor, plan, preview, tracks, baseTrackIndex);
 
             LevelData original = editor.levelData.Copy();
@@ -41,6 +43,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             LevelData candidate = original.Copy();
 
             OrbitCommitResult result = BuildCandidate(candidate, plan, preview, baseTrackIndex);
+            result.PositionAdjusted = positionAdjusted;
 
             try
             {
@@ -70,7 +73,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             result.Diagnostic = "Generated master region from F" + plan.RegionStartFloor + " + " + result.Emitted
                 + " OrbitDecoration action(s). Replaced " + result.Replaced
                 + " previous configured Orbit action(s); remapped " + result.RemappedBaseEvents
-                + " base action(s) inside the region; prefix was preserved. Source snapshots were left unchanged.";
+                + " base action(s) inside the region; applied " + result.PositionAdjusted
+                + " position-aware orbit adjustment(s); prefix was preserved. Source snapshots were left unchanged.";
             return result;
         }
 
@@ -104,7 +108,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
                 int floor;
                 if (!TryReadInt(ev, FloorNames, out floor) || floor < 0) continue;
-                if (floor < plan.RegionStartFloor) continue; // prefix is immutable
+                if (floor < plan.RegionStartFloor) continue;
 
                 string typeName = GetEventTypeName(ev);
                 if (IsOrbitDecoration(typeName) && IsConfiguredOrbitPair(ev, plan))
@@ -153,7 +157,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     SetRequiredValue(clone, new[] { "centerTag" }, segment.CenterTag);
                     SetRequiredValue(clone, new[] { "amount" }, segment.AmountDegrees);
                     SetRequiredValue(clone, new[] { "lockRotation" }, false);
-                    SetRequiredValue(clone, new[] { "dstRadiusMultiplier" }, 1.0);
+                    SetRequiredValue(clone, new[] { "dstRadiusMultiplier" }, segment.DestinationRadiusMultiplier);
                     SetRequiredValue(clone, new[] { "ease" }, "Linear");
                     SetRequiredValue(clone, new[] { "angleOffset" }, 0.0);
                     SetRequiredValue(clone, new[] { "eventTag" }, "");
@@ -310,7 +314,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 || string.Equals(typeName, "MultiPlanet", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(typeName, "Pause", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(typeName, "Hold", StringComparison.OrdinalIgnoreCase)
-                || typeName.StartsWith("FreeRoam", StringComparison.OrdinalIgnoreCase);
+                || typeName.StartsWith("FreeRoam", StringComparison.OrdinalIgnoreCase)
+                || typeName.IndexOf("PositionTrack", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static string GetEventTypeName(object ev)
@@ -332,10 +337,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 throw new InvalidOperationException("Orbit template clone did not retain the requested moving/center tags.");
             double amount;
             double duration;
+            double radiusMultiplier;
             if (!TryReadDouble(ev, new[] { "amount" }, out amount) || Math.Abs(amount - segment.AmountDegrees) > 0.001)
                 throw new InvalidOperationException("Orbit template clone did not retain the requested amount.");
             if (!TryReadDouble(ev, new[] { "duration" }, out duration) || Math.Abs(duration - segment.DurationBeats) > 1.0e-6)
                 throw new InvalidOperationException("Orbit template clone did not retain the requested duration.");
+            if (!TryReadDouble(ev, new[] { "dstRadiusMultiplier" }, out radiusMultiplier)
+                || Math.Abs(radiusMultiplier - segment.DestinationRadiusMultiplier) > 1.0e-6)
+                throw new InvalidOperationException("Orbit template clone did not retain the requested destination radius multiplier.");
         }
 
         private static object CloneEvent(object source)
