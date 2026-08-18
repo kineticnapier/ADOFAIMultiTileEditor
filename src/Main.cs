@@ -6,7 +6,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 {
     public static class Main
     {
-        internal const string ModVersion = "0.10.1";
+        internal const string ModVersion = "0.10.2";
 
         private static UnityModManager.ModEntry.ModLogger logger;
         private static readonly TrackStore store = new TrackStore();
@@ -340,6 +340,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     store.DetachActive();
                     status = "Generated successfully. "
                         + orbitResult.Emitted + " Orbit action(s), "
+                        + orbitResult.PositionAdjusted + " position-aware adjustment(s), "
                         + tileResult.Created + " Floor decoration(s). "
                         + previewFinish
                         + " Output is detached; choose a track tab to resume source editing.";
@@ -382,7 +383,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 ? "source track #" + (store.ActiveIndex + 1)
                 : "detached output/base";
             GUILayout.Label("Editor binding: " + editorBinding);
-            GUILayout.Label("Different SetSpeed maps and different source lengths are merged on region-relative real time.");
+            GUILayout.Label("Different SetSpeed maps, source lengths, and Position Track geometry are merged from source runtime state.");
             GUILayout.Label("Pause / Hold / FreeRoam / MultiPlanet remain unsupported.");
 
             GUILayout.BeginHorizontal();
@@ -463,6 +464,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         + seg.DurationSeconds.ToString("0.######") + " sec  "
                         + seg.MovingTag + " around " + seg.CenterTag
                         + "  amount=" + seg.AmountDegrees.ToString("0.###") + "°"
+                        + "  radius×" + seg.DestinationRadiusMultiplier.ToString("0.###")
+                        + (seg.PositionGeometryApplied ? " [Position]" : "")
                         + "  @M" + seg.MasterAnchorIndex);
                 }
 
