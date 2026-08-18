@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <Compile Include="Main.cs" />
+    <Compile Include="MultiTileOverlay.cs" />
     <Compile Include="TrackStore.cs" />
     <Compile Include="GameAngleProbe.cs" />
     <Compile Include="TrackAnalysis.cs" />
