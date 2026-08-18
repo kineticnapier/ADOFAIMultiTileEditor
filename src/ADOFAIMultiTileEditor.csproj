@@ -33,6 +33,7 @@
     <Compile Include="TrackAnalyzer.cs" />
     <Compile Include="TimelineMerger.cs" />
     <Compile Include="MasterPathBuilder.cs" />
+    <Compile Include="PositionGeometryPlanner.cs" />
     <Compile Include="OrbitEmitter.cs" />
     <Compile Include="PACL2AutoGenerator.cs" />
     <Compile Include="MasterOutputGenerator.cs" />
