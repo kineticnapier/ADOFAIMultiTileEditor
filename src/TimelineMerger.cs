@@ -12,13 +12,17 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (tracks == null || tracks.Count == 0)
                 throw new InvalidOperationException("No analyzed tracks were supplied.");
 
+            int virtualSegments = VirtualRepeatPlanExpander.ExpandRegistered(tracks);
+
             double commonStart = tracks[0].StartBeat;
             double maxEnd = tracks[0].EndBeat;
+            double maxEndSeconds = tracks[0].EndSeconds;
             for (int i = 1; i < tracks.Count; i++)
             {
                 if (!NearlyEqual(tracks[i].StartBeat, commonStart))
                     throw new InvalidOperationException("Track start times do not match within timeline epsilon.");
                 if (tracks[i].EndBeat > maxEnd) maxEnd = tracks[i].EndBeat;
+                if (tracks[i].EndSeconds > maxEndSeconds) maxEndSeconds = tracks[i].EndSeconds;
             }
 
             var allTimes = new List<double>();
@@ -61,7 +65,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             var plan = new GenerationPlan
             {
                 StartBeat = commonStart,
-                EndBeat = maxEnd
+                EndBeat = maxEnd,
+                EndSeconds = maxEndSeconds
             };
             for (int i = 0; i < tracks.Count; i++) plan.Tracks.Add(tracks[i]);
             for (int i = 0; i < canonicalTimes.Count; i++)
@@ -82,10 +87,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 }
             }
 
+            // TrackAnalyzer historically copies track 0's EndSeconds back onto the plan after Merge.
+            // Keep that compatibility field at the true merged maximum while beat termination stays independent.
+            tracks[0].EndSeconds = maxEndSeconds;
+
             plan.Diagnostic = "Plan OK: " + plan.Tracks.Count + " track(s), "
                 + CountSegments(plan.Tracks) + " segment(s), " + plan.Anchors.Count
                 + " master anchor(s), duration " + (plan.EndBeat - plan.StartBeat).ToString("0.######")
-                + " beats (tracks may end independently).";
+                + " beats (tracks may end independently)"
+                + (virtualSegments > 0 ? "; added " + virtualSegments + " virtual-repeat segment(s) from one stored source cycle" : "")
+                + ".";
             return plan;
         }
 
