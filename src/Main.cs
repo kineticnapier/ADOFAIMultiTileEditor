@@ -6,7 +6,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 {
     public static class Main
     {
-        internal const string ModVersion = "0.10.3";
+        internal const string ModVersion = "0.10.4";
 
         private static UnityModManager.ModEntry.ModLogger logger;
         private static readonly TrackStore store = new TrackStore();
@@ -366,7 +366,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     + "   Tracks " + lastPlan.Tracks.Count
                     + "   Duration " + (lastPlan.EndSeconds - lastPlan.StartSeconds).ToString("0.###") + " sec"
                     + "   Master " + lastPlan.MasterBpm.ToString("0.###") + " BPM"
-                    + "   Auto wrap " + CompactLayoutPostProcessor.WrapEveryTiles + " tiles");
+                    + "   Auto wrap " + CompactLayoutPostProcessor.WrapSummary);
             }
         }
 
@@ -385,7 +385,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 ? "source track #" + (store.ActiveIndex + 1)
                 : "detached output/base";
             GUILayout.Label("Editor binding: " + editorBinding);
-            GUILayout.Label("Different SetSpeed maps and source lengths are merged in real time; Position Track and 32-tile wrapping use instant rigid planet teleports.");
+            GUILayout.Label("Different SetSpeed maps and source lengths are merged in real time; Position Track uses instant rigid planet teleports. Auto Wrap can be Off, tile-count, or source-beat based.");
             GUILayout.Label("Pause / Hold / FreeRoam / MultiPlanet remain unsupported.");
 
             GUILayout.BeginHorizontal();
