@@ -6,7 +6,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 {
     public static class Main
     {
-        internal const string ModVersion = "0.10.2";
+        internal const string ModVersion = "0.10.3";
 
         private static UnityModManager.ModEntry.ModLogger logger;
         private static readonly TrackStore store = new TrackStore();
@@ -336,13 +336,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         editor, store.Tracks, lastPlan);
                     string previewFinish = TilePreviewPostProcessor.ApplyAndCommit(
                         editor, store.Tracks, lastPlan);
+                    string compactFinish = CompactLayoutPostProcessor.ApplyAndCommit(
+                        editor, store.Tracks, lastPlan);
 
                     store.DetachActive();
                     status = "Generated successfully. "
                         + orbitResult.Emitted + " Orbit action(s), "
-                        + orbitResult.PositionAdjusted + " position-aware adjustment(s), "
                         + tileResult.Created + " Floor decoration(s). "
-                        + previewFinish
+                        + previewFinish + " " + compactFinish
                         + " Output is detached; choose a track tab to resume source editing.";
                 });
             }
@@ -364,7 +365,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     "Start F" + lastPlan.RegionStartFloor
                     + "   Tracks " + lastPlan.Tracks.Count
                     + "   Duration " + (lastPlan.EndSeconds - lastPlan.StartSeconds).ToString("0.###") + " sec"
-                    + "   Master " + lastPlan.MasterBpm.ToString("0.###") + " BPM");
+                    + "   Master " + lastPlan.MasterBpm.ToString("0.###") + " BPM"
+                    + "   Auto wrap " + CompactLayoutPostProcessor.WrapEveryTiles + " tiles");
             }
         }
 
@@ -383,7 +385,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 ? "source track #" + (store.ActiveIndex + 1)
                 : "detached output/base";
             GUILayout.Label("Editor binding: " + editorBinding);
-            GUILayout.Label("Different SetSpeed maps, source lengths, and Position Track geometry are merged from source runtime state.");
+            GUILayout.Label("Different SetSpeed maps and source lengths are merged in real time; Position Track and 32-tile wrapping use instant rigid planet teleports.");
             GUILayout.Label("Pause / Hold / FreeRoam / MultiPlanet remain unsupported.");
 
             GUILayout.BeginHorizontal();
@@ -464,8 +466,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         + seg.DurationSeconds.ToString("0.######") + " sec  "
                         + seg.MovingTag + " around " + seg.CenterTag
                         + "  amount=" + seg.AmountDegrees.ToString("0.###") + "°"
-                        + "  radius×" + seg.DestinationRadiusMultiplier.ToString("0.###")
-                        + (seg.PositionGeometryApplied ? " [Position]" : "")
                         + "  @M" + seg.MasterAnchorIndex);
                 }
 
