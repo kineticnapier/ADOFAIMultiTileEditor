@@ -22,56 +22,46 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private const string TeleportEventTag = "adofaiMTETeleport";
         private const float PositionEpsilon = 0.0005f;
         private const double BeatEpsilon = 1.0e-9;
-        private const double RepeatAngleTolerance = 0.02;
 
         internal const float WrapRowSpacing = 3.0f;
-
-        // Kept for the compact status line used by older UI code.
         internal static string WrapSummary { get { return "per-track"; } }
 
         internal static string Describe(TrackSlot track)
         {
             if (track == null) return "?";
-            if (track.WrapMode == CompactWrapMode.Off) return "Off";
 
-            string core = track.WrapMode == CompactWrapMode.Beats
-                ? track.WrapEveryBeats.ToString("0.###", CultureInfo.InvariantCulture) + " beats"
-                : track.WrapEveryTiles + " tiles";
+            string layout;
+            if (track.WrapMode == CompactWrapMode.Off) layout = "layout off";
+            else if (track.WrapMode == CompactWrapMode.Beats)
+                layout = track.WrapEveryBeats.ToString("0.###", CultureInfo.InvariantCulture) + " beats";
+            else layout = track.WrapEveryTiles + " tiles";
 
-            if (track.ReuseRepeatPath && track.RepeatCount > 1)
-                core += " | repeat x" + track.RepeatCount + " -> first tile";
-            return core;
+            int repeats = track.EffectiveRepeatCount;
+            if (repeats > 1) layout += " | virtual x" + repeats + " -> first tile";
+            return layout;
         }
 
         private sealed class TeleportPoint
         {
             internal double Beat;
+            internal string Tag;
             internal Vector2 Delta;
-        }
-
-        private sealed class LayoutBlock
-        {
-            internal int StartSegment;
-            internal int EndSegmentExclusive;
-            internal int SegmentCount { get { return EndSegmentExclusive - StartSegment; } }
         }
 
         private sealed class SourceLayout
         {
             internal int TrackIndex;
             internal int PreviewSourceOffset;
+            internal int SourceCycleSegments;
+            internal int EffectiveRepeatCount;
             internal int ExtraRows;
-            internal int ReusedBlocks;
-            internal int RemovedRepeatPreviews;
             internal string PlanetATag;
             internal string PlanetBTag;
-            internal CompactWrapMode WrapMode;
-            internal int RepeatCount;
-            internal bool ReuseRepeatPath;
+            internal bool InitialPivotIsA;
+            internal Vector2 IncomingLocal;
             internal readonly List<Vector2> ActualLocal = new List<Vector2>();
             internal readonly List<Vector2> WrappedLocal = new List<Vector2>();
             internal readonly List<Vector2> BaseLocal = new List<Vector2>();
-            internal readonly List<bool> KeepPreviewBySource = new List<bool>();
             internal readonly List<TeleportPoint> Teleports = new List<TeleportPoint>();
         }
 
@@ -101,17 +91,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             int movedTiles = 0;
             int wrappedRows = 0;
             int emittedTeleports = 0;
-            int reusedBlocks = 0;
-            int removedRepeatPreviews = 0;
+            int virtualCycles = 0;
 
             for (int i = 0; i < layouts.Count; i++)
             {
                 SourceLayout layout = layouts[i];
                 movedTiles += ApplyPreviewLayout(decorations, layout);
                 wrappedRows += layout.ExtraRows;
-                reusedBlocks += layout.ReusedBlocks;
-                removedRepeatPreviews += layout.RemovedRepeatPreviews;
                 emittedTeleports += EmitTeleports(levelEvents, plan, layout);
+                virtualCycles += Math.Max(0, layout.EffectiveRepeatCount - 1);
             }
 
             bool committed = false;
@@ -123,9 +111,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 committed = true;
 
                 return "Compact layout: per-track settings, " + wrappedRows + " extra row(s), "
-                    + movedTiles + " preview move(s), reused " + reusedBlocks + " repeat block(s) and removed "
-                    + removedRepeatPreviews + " duplicate repeat preview(s); emitted " + emittedTeleports
-                    + " instant planet teleport(s) for Position Track / layout transitions"
+                    + movedTiles + " preview move(s), " + virtualCycles + " virtual repeat cycle(s) reusing the stored source preview; emitted "
+                    + emittedTeleports + " instant planet teleport(s) for Position Track / layout / repeat-return transitions"
                     + (removedTeleports > 0 ? "; replaced " + removedTeleports + " previous teleport event(s)." : ".");
             }
             finally
@@ -145,7 +132,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 TrackSlot track = tracks[i];
                 if (track == null) throw new InvalidOperationException("Track #" + (i + 1) + " is unavailable.");
-
                 if (track.WrapMode == CompactWrapMode.Tiles && track.WrapEveryTiles <= 0)
                     throw new InvalidOperationException("Track '" + track.Name + "' tile layout length must be at least 1, or set layout to Off.");
                 if (track.WrapMode == CompactWrapMode.Beats
@@ -211,21 +197,35 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (regionIndex < 0 || regionIndex + 1 >= floors.Count)
                 throw new InvalidOperationException("Track '" + slot.Name + "' compact-layout region could not be reconstructed.");
 
-            int availableSegments = floors.Count - regionIndex - 1;
-            if (availableSegments != analyzed.Segments.Count)
-                throw new InvalidOperationException("Track '" + slot.Name + "' source floor count changed after analysis.");
+            int sourceCycleSegments = floors.Count - regionIndex - 1;
+            int repeats = slot.EffectiveRepeatCount;
+            int expectedSegments = sourceCycleSegments * repeats;
+            if (analyzed.Segments.Count != expectedSegments)
+            {
+                throw new InvalidOperationException(
+                    "Track '" + slot.Name + "' virtual-repeat plan no longer matches its one stored source cycle: expected "
+                    + expectedSegments + " segment(s) = " + sourceCycleSegments + " x " + repeats
+                    + ", got " + analyzed.Segments.Count + ". Re-analyze before generating.");
+            }
 
             float tileSize = ResolveTileSize();
             Vector2 start = ToLevelPosition(floors[regionIndex], tileSize);
+            Vector2 incoming;
+            if (regionIndex > 0)
+                incoming = ToLevelPosition(floors[regionIndex - 1], tileSize) - start;
+            else
+                incoming = ToLevelPosition(floors[regionIndex + 1], tileSize) - start;
+
             var layout = new SourceLayout
             {
                 TrackIndex = trackIndex,
                 PreviewSourceOffset = regionIndex > 0 ? 0 : 1,
+                SourceCycleSegments = sourceCycleSegments,
+                EffectiveRepeatCount = repeats,
                 PlanetATag = analyzed.PlanetATag,
                 PlanetBTag = analyzed.PlanetBTag,
-                WrapMode = slot.WrapMode,
-                RepeatCount = Math.Max(1, slot.RepeatCount),
-                ReuseRepeatPath = slot.ReuseRepeatPath && slot.RepeatCount > 1 && slot.WrapMode != CompactWrapMode.Off
+                InitialPivotIsA = analyzed.InitialPivotIsA,
+                IncomingLocal = incoming
             };
 
             for (int i = regionIndex; i < floors.Count; i++)
@@ -233,21 +233,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             BuildWrappedPositions(layout, analyzed, slot);
             BuildNaturalBasePositions(floors, regionIndex, layout.BaseLocal);
-
-            for (int s = 0; s < analyzed.Segments.Count; s++)
-            {
-                Vector2 currentOffset = layout.WrappedLocal[s] - layout.BaseLocal[s];
-                Vector2 nextOffset = layout.WrappedLocal[s + 1] - layout.BaseLocal[s + 1];
-                Vector2 delta = nextOffset - currentOffset;
-                if (delta.sqrMagnitude <= PositionEpsilon * PositionEpsilon) continue;
-
-                layout.Teleports.Add(new TeleportPoint
-                {
-                    Beat = analyzed.Segments[s].EndBeat,
-                    Delta = delta
-                });
-            }
-
+            BuildTeleportPlan(layout, analyzed);
             return layout;
         }
 
@@ -274,173 +260,113 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static void BuildWrappedPositions(SourceLayout layout, AnalyzedTrack analyzed, TrackSlot slot)
         {
             layout.WrappedLocal.Clear();
-            layout.KeepPreviewBySource.Clear();
             layout.ExtraRows = 0;
-            layout.ReusedBlocks = 0;
-
             IList<Vector2> source = layout.ActualLocal;
             if (source == null || source.Count == 0) return;
 
-            if (slot.WrapMode == CompactWrapMode.Off || analyzed.Segments.Count == 0)
+            if (slot.WrapMode == CompactWrapMode.Off)
             {
-                for (int i = 0; i < source.Count; i++)
-                {
-                    layout.WrappedLocal.Add(source[i]);
-                    layout.KeepPreviewBySource.Add(true);
-                }
+                for (int i = 0; i < source.Count; i++) layout.WrappedLocal.Add(source[i]);
                 return;
             }
 
-            List<LayoutBlock> blocks = BuildBlocks(analyzed, slot);
-            if (blocks.Count == 0)
-            {
-                for (int i = 0; i < source.Count; i++)
-                {
-                    layout.WrappedLocal.Add(source[i]);
-                    layout.KeepPreviewBySource.Add(true);
-                }
-                return;
-            }
-
-            int[] blockForSegment = new int[analyzed.Segments.Count];
-            for (int b = 0; b < blocks.Count; b++)
-            {
-                LayoutBlock block = blocks[b];
-                for (int s = block.StartSegment; s < block.EndSegmentExclusive; s++)
-                    blockForSegment[s] = b;
-            }
-
-            if (layout.ReuseRepeatPath)
-                ValidateReusableBlocks(analyzed, blocks, layout.RepeatCount, slot.Name);
-
-            int maxDisplayRow = 0;
-            for (int floorIndex = 0; floorIndex < source.Count; floorIndex++)
-            {
-                int blockIndex;
-                if (floorIndex < analyzed.Segments.Count)
-                    blockIndex = blockForSegment[floorIndex];
-                else
-                    blockIndex = blockForSegment[analyzed.Segments.Count - 1];
-
-                LayoutBlock block = blocks[blockIndex];
-                int ordinal = floorIndex - block.StartSegment;
-                if (ordinal < 0) ordinal = 0;
-                if (ordinal > block.SegmentCount) ordinal = block.SegmentCount;
-
-                int templateBlockIndex = blockIndex;
-                int displayRow = blockIndex;
-                bool keepPreview = true;
-
-                if (layout.ReuseRepeatPath)
-                {
-                    int repeatIndex = blockIndex % layout.RepeatCount;
-                    templateBlockIndex = blockIndex - repeatIndex;
-                    displayRow = blockIndex / layout.RepeatCount;
-                    keepPreview = repeatIndex == 0;
-                    if (repeatIndex != 0) layout.ReusedBlocks = Math.Max(layout.ReusedBlocks, blockIndex - displayRow);
-                }
-
-                LayoutBlock template = blocks[templateBlockIndex];
-                int templateSourceIndex = template.StartSegment + ordinal;
-                if (templateSourceIndex < 0) templateSourceIndex = 0;
-                if (templateSourceIndex >= source.Count) templateSourceIndex = source.Count - 1;
-
-                Vector2 rowOrigin = source[0] + new Vector2(0f, -displayRow * WrapRowSpacing);
-                Vector2 localShape = source[templateSourceIndex] - source[template.StartSegment];
-                layout.WrappedLocal.Add(rowOrigin + localShape);
-                layout.KeepPreviewBySource.Add(keepPreview);
-                if (displayRow > maxDisplayRow) maxDisplayRow = displayRow;
-            }
-
-            if (layout.ReuseRepeatPath)
-            {
-                int count = 0;
-                for (int b = 0; b < blocks.Count; b++)
-                    if ((b % layout.RepeatCount) != 0) count++;
-                layout.ReusedBlocks = count;
-            }
-
-            layout.ExtraRows = maxDisplayRow;
-        }
-
-        private static List<LayoutBlock> BuildBlocks(AnalyzedTrack analyzed, TrackSlot slot)
-        {
-            var blocks = new List<LayoutBlock>();
-            int segmentCount = analyzed.Segments.Count;
-            if (segmentCount == 0) return blocks;
+            var blockByFloor = new List<int>(source.Count);
+            int maxBlock = 0;
 
             if (slot.WrapMode == CompactWrapMode.Tiles)
             {
                 int length = Math.Max(1, slot.WrapEveryTiles);
-                for (int start = 0; start < segmentCount; start += length)
+                for (int i = 0; i < source.Count; i++)
                 {
-                    blocks.Add(new LayoutBlock
-                    {
-                        StartSegment = start,
-                        EndSegmentExclusive = Math.Min(segmentCount, start + length)
-                    });
+                    int block = i / length;
+                    blockByFloor.Add(block);
+                    if (block > maxBlock) maxBlock = block;
                 }
-                return blocks;
             }
-
-            int blockStart = 0;
-            int currentBucket = 0;
-            double cumulative = 0.0;
-            double lengthBeats = slot.WrapEveryBeats;
-
-            for (int s = 0; s < segmentCount; s++)
+            else
             {
-                int bucket = (int)Math.Floor((cumulative + BeatEpsilon) / lengthBeats);
-                if (s > blockStart && bucket != currentBucket)
+                double cumulativeSourceBeats = 0.0;
+                blockByFloor.Add(0);
+                for (int i = 1; i < source.Count; i++)
                 {
-                    blocks.Add(new LayoutBlock { StartSegment = blockStart, EndSegmentExclusive = s });
-                    blockStart = s;
-                    currentBucket = bucket;
+                    int segmentIndex = i - 1;
+                    if (segmentIndex < layout.SourceCycleSegments)
+                        cumulativeSourceBeats += Math.Max(0.0, analyzed.Segments[segmentIndex].SourceDurationBeats);
+                    int block = (int)Math.Floor((cumulativeSourceBeats + BeatEpsilon) / slot.WrapEveryBeats);
+                    if (block < 0) block = 0;
+                    blockByFloor.Add(block);
+                    if (block > maxBlock) maxBlock = block;
                 }
-                cumulative += Math.Max(0.0, analyzed.Segments[s].SourceDurationBeats);
             }
 
-            blocks.Add(new LayoutBlock { StartSegment = blockStart, EndSegmentExclusive = segmentCount });
-            return blocks;
+            var firstIndexByBlock = new Dictionary<int, int>();
+            for (int i = 0; i < blockByFloor.Count; i++)
+            {
+                int block = blockByFloor[i];
+                if (!firstIndexByBlock.ContainsKey(block)) firstIndexByBlock[block] = i;
+            }
+
+            for (int i = 0; i < source.Count; i++)
+            {
+                int block = blockByFloor[i];
+                int blockStart = firstIndexByBlock[block];
+                Vector2 rowOrigin = source[0] + new Vector2(0f, -block * WrapRowSpacing);
+                layout.WrappedLocal.Add(rowOrigin + (source[i] - source[blockStart]));
+            }
+
+            layout.ExtraRows = maxBlock;
         }
 
-        private static void ValidateReusableBlocks(
-            AnalyzedTrack analyzed,
-            IList<LayoutBlock> blocks,
-            int repeatCount,
-            string trackName)
+        private static void BuildTeleportPlan(SourceLayout layout, AnalyzedTrack analyzed)
         {
-            for (int b = 0; b < blocks.Count; b++)
-            {
-                int repeatIndex = b % repeatCount;
-                if (repeatIndex == 0) continue;
+            layout.Teleports.Clear();
+            int n = layout.SourceCycleSegments;
+            if (n <= 0) return;
 
-                int templateIndex = b - repeatIndex;
-                LayoutBlock template = blocks[templateIndex];
-                LayoutBlock candidate = blocks[b];
-                if (candidate.SegmentCount != template.SegmentCount)
+            for (int cycle = 0; cycle < layout.EffectiveRepeatCount; cycle++)
+            {
+                int cycleStart = cycle * n;
+                for (int s = 0; s < n; s++)
                 {
-                    throw new InvalidOperationException(
-                        "Track '" + trackName + "' repeat block " + (b + 1)
-                        + " has " + candidate.SegmentCount + " segment(s), but its reusable template has "
-                        + template.SegmentCount + ". Change the layout length/repeat count or disable 'return to first tile'.");
+                    TrackSegment segment = analyzed.Segments[cycleStart + s];
+                    Vector2 currentOffset = layout.WrappedLocal[s] - layout.BaseLocal[s];
+                    Vector2 nextOffset = layout.WrappedLocal[s + 1] - layout.BaseLocal[s + 1];
+                    Vector2 delta = nextOffset - currentOffset;
+                    AddTeleport(layout, segment.EndBeat, layout.PlanetATag + " " + layout.PlanetBTag, delta);
                 }
 
-                for (int i = 0; i < template.SegmentCount; i++)
+                if (cycle + 1 >= layout.EffectiveRepeatCount) continue;
+
+                TrackSegment boundary = analyzed.Segments[cycleStart + n - 1];
+                Vector2 finalOffset = layout.WrappedLocal[n] - layout.BaseLocal[n];
+                Vector2 finalPivot = layout.WrappedLocal[n];
+                Vector2 finalOther = layout.BaseLocal[Math.Max(0, n - 1)] + finalOffset;
+                Vector2 startOffset = layout.WrappedLocal[0] - layout.BaseLocal[0];
+                Vector2 targetPivot = layout.WrappedLocal[0];
+                Vector2 targetOther = layout.IncomingLocal + startOffset;
+
+                long totalSegments = (long)(cycle + 1) * n;
+                bool endPivotIsA = (totalSegments & 1L) == 0L
+                    ? layout.InitialPivotIsA
+                    : !layout.InitialPivotIsA;
+
+                if (endPivotIsA)
                 {
-                    double expected = analyzed.Segments[template.StartSegment + i].AmountDegrees;
-                    double actual = analyzed.Segments[candidate.StartSegment + i].AmountDegrees;
-                    if (Math.Abs(expected - actual) > RepeatAngleTolerance)
-                    {
-                        throw new InvalidOperationException(
-                            "Track '" + trackName + "' repeat block " + (b + 1)
-                            + " differs from its reusable template near step " + (i + 1)
-                            + " (" + expected.ToString("0.###", CultureInfo.InvariantCulture) + "° vs "
-                            + actual.ToString("0.###", CultureInfo.InvariantCulture)
-                            + "°). Disable reuse or adjust the repeat group length.");
-                    }
+                    AddTeleport(layout, boundary.EndBeat, layout.PlanetATag, targetPivot - finalPivot);
+                    AddTeleport(layout, boundary.EndBeat, layout.PlanetBTag, targetOther - finalOther);
+                }
+                else
+                {
+                    AddTeleport(layout, boundary.EndBeat, layout.PlanetBTag, targetPivot - finalPivot);
+                    AddTeleport(layout, boundary.EndBeat, layout.PlanetATag, targetOther - finalOther);
                 }
             }
+        }
+
+        private static void AddTeleport(SourceLayout layout, double beat, string tag, Vector2 delta)
+        {
+            if (delta.sqrMagnitude <= PositionEpsilon * PositionEpsilon) return;
+            layout.Teleports.Add(new TeleportPoint { Beat = beat, Tag = tag, Delta = delta });
         }
 
         private static int ApplyPreviewLayout(IList decorations, SourceLayout layout)
@@ -454,7 +380,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             Vector2 originalFirst = ReadVector2Data(first, "position", Vector2.zero);
             Vector2 origin = originalFirst - layout.ActualLocal[firstSource];
             int moved = 0;
-            int removed = 0;
 
             for (int i = 0; ; i++)
             {
@@ -462,15 +387,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (preview == null) break;
                 int sourceIndex = layout.PreviewSourceOffset + i;
                 if (sourceIndex < 0 || sourceIndex >= layout.WrappedLocal.Count) break;
-
-                if (layout.ReuseRepeatPath
-                    && sourceIndex < layout.KeepPreviewBySource.Count
-                    && !layout.KeepPreviewBySource[sourceIndex])
-                {
-                    decorations.Remove(preview);
-                    removed++;
-                    continue;
-                }
 
                 Vector2 target = origin + layout.WrappedLocal[sourceIndex];
                 Vector2 current = ReadVector2Data(preview, "position", target);
@@ -480,8 +396,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     moved++;
                 }
             }
-
-            layout.RemovedRepeatPreviews = removed;
 
             LevelEvent end = FindOwnedEndTile(decorations, layout.TrackIndex);
             if (end != null && layout.WrappedLocal.Count > 0)
@@ -506,12 +420,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 TeleportPoint point = layout.Teleports[i];
                 int anchor = TimelineMerger.FindAnchorIndex(plan.Anchors, point.Beat);
                 if (anchor < 0)
-                    throw new InvalidOperationException("Position/layout teleport could not be mapped to the master timeline for track #" + (layout.TrackIndex + 1) + ".");
+                    throw new InvalidOperationException("Position/layout/repeat teleport could not be mapped to the master timeline for track #" + (layout.TrackIndex + 1) + ".");
 
                 int outputFloor = plan.RegionStartFloor + anchor;
                 LevelEvent move = CreateCustomEvent("MoveDecorations", outputFloor);
                 SetRequiredData(move, "duration", 0f);
-                SetRequiredData(move, "tag", layout.PlanetATag + " " + layout.PlanetBTag);
+                SetRequiredData(move, "tag", point.Tag);
                 SetRequiredData(move, "relativeTo", "LastPosition");
                 SetRequiredData(move, "positionOffset", point.Delta);
                 SetOptionalData(move, "angleOffset", 0f);
