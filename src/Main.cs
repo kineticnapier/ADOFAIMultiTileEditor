@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using UnityEngine;
 using UnityModManagerNet;
 
@@ -6,7 +7,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 {
     public static class Main
     {
-        internal const string ModVersion = "0.10.4";
+        internal const string ModVersion = "0.10.5";
 
         private static UnityModManager.ModEntry.ModLogger logger;
         private static readonly TrackStore store = new TrackStore();
@@ -261,6 +262,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
             GUILayout.EndHorizontal();
 
+            DrawLayoutSettings(track);
+
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Save track", GUILayout.Width(110f)))
             {
@@ -297,6 +300,64 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             GUILayout.EndHorizontal();
 
             GUILayout.EndVertical();
+        }
+
+        private static void DrawLayoutSettings(TrackSlot track)
+        {
+            GUILayout.Space(3f);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Layout", GUILayout.Width(58f));
+
+            if (GUILayout.Button(track.WrapMode == CompactWrapMode.Off ? "> Off" : "Off", GUILayout.Width(58f)))
+                track.WrapMode = CompactWrapMode.Off;
+            if (GUILayout.Button(track.WrapMode == CompactWrapMode.Tiles ? "> Tiles" : "Tiles", GUILayout.Width(66f)))
+                track.WrapMode = CompactWrapMode.Tiles;
+            if (GUILayout.Button(track.WrapMode == CompactWrapMode.Beats ? "> Beats" : "Beats", GUILayout.Width(68f)))
+                track.WrapMode = CompactWrapMode.Beats;
+
+            if (track.WrapMode == CompactWrapMode.Tiles)
+            {
+                GUILayout.Label("Length", GUILayout.Width(45f));
+                track.WrapTilesText = GUILayout.TextField(track.WrapTilesText ?? "", GUILayout.Width(58f));
+                int value;
+                if (int.TryParse(track.WrapTilesText, NumberStyles.Integer, CultureInfo.InvariantCulture, out value) && value > 0)
+                    track.WrapEveryTiles = value;
+                GUILayout.Label("tiles", GUILayout.Width(35f));
+            }
+            else if (track.WrapMode == CompactWrapMode.Beats)
+            {
+                GUILayout.Label("Length", GUILayout.Width(45f));
+                track.WrapBeatsText = GUILayout.TextField(track.WrapBeatsText ?? "", GUILayout.Width(58f));
+                double value;
+                if (double.TryParse(track.WrapBeatsText, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+                    && value > 0.0 && !double.IsNaN(value) && !double.IsInfinity(value))
+                    track.WrapEveryBeats = value;
+                GUILayout.Label("beats", GUILayout.Width(40f));
+            }
+
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            if (track.WrapMode != CompactWrapMode.Off)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Repeat", GUILayout.Width(58f));
+                track.RepeatCountText = GUILayout.TextField(track.RepeatCountText ?? "", GUILayout.Width(58f));
+                int repeats;
+                if (int.TryParse(track.RepeatCountText, NumberStyles.Integer, CultureInfo.InvariantCulture, out repeats) && repeats > 0)
+                    track.RepeatCount = repeats;
+                GUILayout.Label("x", GUILayout.Width(16f));
+
+                bool reuse = GUILayout.Toggle(track.ReuseRepeatPath, "Return to first tile / reuse preview", GUILayout.Width(230f));
+                track.ReuseRepeatPath = reuse;
+                GUILayout.FlexibleSpace();
+                GUILayout.Label(CompactLayoutPostProcessor.Describe(track));
+                GUILayout.EndHorizontal();
+            }
+            else
+            {
+                GUILayout.Label("Layout: Off (source Position Track is still reproduced with instant planet teleports). ");
+            }
         }
 
         private static void DrawGenerationControls(scnEditor editor)
@@ -366,7 +427,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     + "   Tracks " + lastPlan.Tracks.Count
                     + "   Duration " + (lastPlan.EndSeconds - lastPlan.StartSeconds).ToString("0.###") + " sec"
                     + "   Master " + lastPlan.MasterBpm.ToString("0.###") + " BPM"
-                    + "   Auto wrap " + CompactLayoutPostProcessor.WrapSummary);
+                    + "   Layout per group");
             }
         }
 
@@ -385,7 +446,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 ? "source track #" + (store.ActiveIndex + 1)
                 : "detached output/base";
             GUILayout.Label("Editor binding: " + editorBinding);
-            GUILayout.Label("Different SetSpeed maps and source lengths are merged in real time; Position Track uses instant rigid planet teleports. Auto Wrap can be Off, tile-count, or source-beat based.");
+            GUILayout.Label("Each planet group has its own Off/Tiles/Beats layout length and repeat-reuse settings. Position Track and layout jumps use instant rigid planet teleports.");
+            GUILayout.Label("Repeat reuse returns the group to its first displayed tile and removes duplicate repeat Floor previews; the logical timing/orbits remain intact.");
             GUILayout.Label("Pause / Hold / FreeRoam / MultiPlanet remain unsupported.");
 
             GUILayout.BeginHorizontal();
