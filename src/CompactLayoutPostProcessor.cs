@@ -8,15 +8,36 @@ using UnityEngine;
 
 namespace KineticNapier.ADOFAIMultiTileEditor
 {
+    internal enum CompactWrapMode
+    {
+        Off,
+        Tiles,
+        Beats
+    }
+
     internal static class CompactLayoutPostProcessor
     {
         private const string OwnerTag = "adofaiMTEGenerated";
         private const string EndTag = "adofaiMTEEnd";
         private const string TeleportEventTag = "adofaiMTETeleport";
         private const float PositionEpsilon = 0.0005f;
+        private const double BeatEpsilon = 1.0e-9;
 
-        internal const int WrapEveryTiles = 32;
+        internal static CompactWrapMode WrapMode = CompactWrapMode.Tiles;
+        internal static int WrapEveryTiles = 32;
+        internal static double WrapEveryBeats = 16.0;
         internal const float WrapRowSpacing = 3.0f;
+
+        internal static string WrapSummary
+        {
+            get
+            {
+                if (WrapMode == CompactWrapMode.Off) return "Off";
+                if (WrapMode == CompactWrapMode.Beats)
+                    return WrapEveryBeats.ToString("0.###", CultureInfo.InvariantCulture) + " beats";
+                return WrapEveryTiles + " tiles";
+            }
+        }
 
         private sealed class TeleportPoint
         {
@@ -28,6 +49,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             internal int TrackIndex;
             internal int PreviewSourceOffset;
+            internal int ExtraRows;
             internal string PlanetATag;
             internal string PlanetBTag;
             internal readonly List<Vector2> ActualLocal = new List<Vector2>();
@@ -45,6 +67,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 throw new InvalidOperationException("Editor is not ready.");
             if (tracks == null || plan == null || tracks.Count != plan.Tracks.Count)
                 throw new InvalidOperationException("Compact layout inputs no longer match the analyzed plan.");
+
+            ValidateSettings();
 
             LevelData output = editor.levelData.Copy();
             int selectedFloor = GameAngleProbe.TryGetSelectedFloorIndex(editor);
@@ -65,8 +89,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 SourceLayout layout = layouts[i];
                 movedTiles += ApplyPreviewLayout(decorations, layout);
-                if (layout.WrappedLocal.Count > WrapEveryTiles)
-                    wrappedRows += (layout.WrappedLocal.Count - 1) / WrapEveryTiles;
+                wrappedRows += layout.ExtraRows;
                 emittedTeleports += EmitTeleports(levelEvents, plan, layout);
             }
 
@@ -77,9 +100,21 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 editor.ApplyEventsToFloors();
                 editor.UpdateDecorationObjects();
                 committed = true;
-                return "Compact layout: auto-wrapped source previews every " + WrapEveryTiles
-                    + " tiles (" + wrappedRows + " extra row(s), " + movedTiles + " preview tile move(s)); emitted "
-                    + emittedTeleports + " instant planet teleport(s) for Position Track / row-wrap transitions"
+
+                string wrapText;
+                if (WrapMode == CompactWrapMode.Off)
+                {
+                    wrapText = "Compact layout: wrapping off; kept source preview geometry";
+                }
+                else
+                {
+                    wrapText = "Compact layout: auto-wrapped source previews every " + WrapSummary
+                        + " (" + wrappedRows + " extra row(s), " + movedTiles + " preview tile move(s))";
+                }
+
+                return wrapText + "; emitted " + emittedTeleports
+                    + " instant planet teleport(s) for Position Track"
+                    + (WrapMode == CompactWrapMode.Off ? "" : " / row-wrap transitions")
                     + (removedTeleports > 0 ? "; replaced " + removedTeleports + " previous teleport event(s)." : ".");
             }
             finally
@@ -91,6 +126,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         editor.SelectFloor(editor.floors[selectedFloor], true);
                 }
             }
+        }
+
+        private static void ValidateSettings()
+        {
+            if (WrapMode == CompactWrapMode.Tiles && WrapEveryTiles <= 0)
+                throw new InvalidOperationException("Auto Wrap tile length must be at least 1, or set wrap mode to Off.");
+            if (WrapMode == CompactWrapMode.Beats
+                && (!(WrapEveryBeats > BeatEpsilon) || double.IsNaN(WrapEveryBeats) || double.IsInfinity(WrapEveryBeats)))
+                throw new InvalidOperationException("Auto Wrap beat length must be positive, or set wrap mode to Off.");
         }
 
         private static List<SourceLayout> CaptureLayouts(
@@ -165,7 +209,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             for (int i = regionIndex; i < floors.Count; i++)
                 layout.ActualLocal.Add(ToLevelPosition(floors[i], tileSize) - start);
 
-            BuildWrappedPositions(layout.ActualLocal, layout.WrappedLocal);
+            BuildWrappedPositions(layout, analyzed);
             BuildNaturalBasePositions(floors, regionIndex, layout.BaseLocal);
 
             for (int s = 0; s < analyzed.Segments.Count; s++)
@@ -205,18 +249,64 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
         }
 
-        private static void BuildWrappedPositions(IList<Vector2> source, IList<Vector2> destination)
+        private static void BuildWrappedPositions(SourceLayout layout, AnalyzedTrack analyzed)
         {
-            destination.Clear();
+            layout.WrappedLocal.Clear();
+            layout.ExtraRows = 0;
+            IList<Vector2> source = layout.ActualLocal;
             if (source == null || source.Count == 0) return;
+
+            if (WrapMode == CompactWrapMode.Off)
+            {
+                for (int i = 0; i < source.Count; i++) layout.WrappedLocal.Add(source[i]);
+                return;
+            }
+
+            var blockByIndex = new List<int>(source.Count);
+            int maxBlock = 0;
+
+            if (WrapMode == CompactWrapMode.Tiles)
+            {
+                int length = Math.Max(1, WrapEveryTiles);
+                for (int i = 0; i < source.Count; i++)
+                {
+                    int block = i / length;
+                    blockByIndex.Add(block);
+                    if (block > maxBlock) maxBlock = block;
+                }
+            }
+            else
+            {
+                double cumulativeSourceBeats = 0.0;
+                blockByIndex.Add(0);
+                for (int i = 1; i < source.Count; i++)
+                {
+                    int segmentIndex = i - 1;
+                    if (segmentIndex < analyzed.Segments.Count)
+                        cumulativeSourceBeats += Math.Max(0.0, analyzed.Segments[segmentIndex].SourceDurationBeats);
+                    int block = (int)Math.Floor((cumulativeSourceBeats + BeatEpsilon) / WrapEveryBeats);
+                    if (block < 0) block = 0;
+                    blockByIndex.Add(block);
+                    if (block > maxBlock) maxBlock = block;
+                }
+            }
+
+            var firstIndexByBlock = new Dictionary<int, int>();
+            for (int i = 0; i < blockByIndex.Count; i++)
+            {
+                int block = blockByIndex[i];
+                if (!firstIndexByBlock.ContainsKey(block)) firstIndexByBlock[block] = i;
+            }
 
             for (int i = 0; i < source.Count; i++)
             {
-                int block = i / WrapEveryTiles;
-                int blockStart = block * WrapEveryTiles;
+                int block = blockByIndex[i];
+                int blockStart = firstIndexByBlock[block];
                 Vector2 rowOrigin = source[0] + new Vector2(0f, -block * WrapRowSpacing);
-                destination.Add(rowOrigin + (source[i] - source[blockStart]));
+                layout.WrappedLocal.Add(rowOrigin + (source[i] - source[blockStart]));
             }
+
+            layout.ExtraRows = maxBlock;
         }
 
         private static int ApplyPreviewLayout(IList decorations, SourceLayout layout)
