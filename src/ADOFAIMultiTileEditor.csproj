@@ -31,6 +31,7 @@
     <Compile Include="GameAngleProbe.cs" />
     <Compile Include="TrackAnalysis.cs" />
     <Compile Include="TrackAnalyzer.cs" />
+    <Compile Include="VirtualRepeatPlanExpander.cs" />
     <Compile Include="TimelineMerger.cs" />
     <Compile Include="MasterPathBuilder.cs" />
     <Compile Include="PositionGeometryPlanner.cs" />
