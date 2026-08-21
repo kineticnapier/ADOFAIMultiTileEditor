@@ -7,7 +7,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 {
     public static class Main
     {
-        internal const string ModVersion = "0.10.5";
+        internal const string ModVersion = "0.10.6";
 
         private static UnityModManager.ModEntry.ModLogger logger;
         private static readonly TrackStore store = new TrackStore();
@@ -338,26 +338,22 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
-            if (track.WrapMode != CompactWrapMode.Off)
-            {
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("Repeat", GUILayout.Width(58f));
-                track.RepeatCountText = GUILayout.TextField(track.RepeatCountText ?? "", GUILayout.Width(58f));
-                int repeats;
-                if (int.TryParse(track.RepeatCountText, NumberStyles.Integer, CultureInfo.InvariantCulture, out repeats) && repeats > 0)
-                    track.RepeatCount = repeats;
-                GUILayout.Label("x", GUILayout.Width(16f));
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Virtual repeat", GUILayout.Width(88f));
+            track.RepeatCountText = GUILayout.TextField(track.RepeatCountText ?? "", GUILayout.Width(58f));
+            int repeats;
+            if (int.TryParse(track.RepeatCountText, NumberStyles.Integer, CultureInfo.InvariantCulture, out repeats) && repeats > 0)
+                track.RepeatCount = repeats;
+            GUILayout.Label("x", GUILayout.Width(16f));
 
-                bool reuse = GUILayout.Toggle(track.ReuseRepeatPath, "Return to first tile / reuse preview", GUILayout.Width(230f));
-                track.ReuseRepeatPath = reuse;
-                GUILayout.FlexibleSpace();
-                GUILayout.Label(CompactLayoutPostProcessor.Describe(track));
-                GUILayout.EndHorizontal();
-            }
-            else
-            {
-                GUILayout.Label("Layout: Off (source Position Track is still reproduced with instant planet teleports). ");
-            }
+            bool reuse = GUILayout.Toggle(track.ReuseRepeatPath, "Return to first tile / reuse one source cycle", GUILayout.Width(280f));
+            track.ReuseRepeatPath = reuse;
+            GUILayout.FlexibleSpace();
+            GUILayout.Label(CompactLayoutPostProcessor.Describe(track));
+            GUILayout.EndHorizontal();
+
+            if (track.WrapMode == CompactWrapMode.Off)
+                GUILayout.Label("Layout folding is off; Position Track and virtual repeat returns still use instant planet teleports.");
         }
 
         private static void DrawGenerationControls(scnEditor editor)
@@ -427,7 +423,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     + "   Tracks " + lastPlan.Tracks.Count
                     + "   Duration " + (lastPlan.EndSeconds - lastPlan.StartSeconds).ToString("0.###") + " sec"
                     + "   Master " + lastPlan.MasterBpm.ToString("0.###") + " BPM"
-                    + "   Layout per group");
+                    + "   Layout/repeat per group");
             }
         }
 
@@ -446,8 +442,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 ? "source track #" + (store.ActiveIndex + 1)
                 : "detached output/base";
             GUILayout.Label("Editor binding: " + editorBinding);
-            GUILayout.Label("Each planet group has its own Off/Tiles/Beats layout length and repeat-reuse settings. Position Track and layout jumps use instant rigid planet teleports.");
-            GUILayout.Label("Repeat reuse returns the group to its first displayed tile and removes duplicate repeat Floor previews; the logical timing/orbits remain intact.");
+            GUILayout.Label("Each planet group has its own Off/Tiles/Beats layout length and virtual-repeat settings. Position Track and layout jumps use instant rigid planet teleports.");
+            GUILayout.Label("Virtual repeat expands timing/orbits from one stored source cycle; between cycles the group returns to that cycle's first tile and reuses the same Floor preview.");
             GUILayout.Label("Pause / Hold / FreeRoam / MultiPlanet remain unsupported.");
 
             GUILayout.BeginHorizontal();
