@@ -15,6 +15,18 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal string PlanetBTag = "";
         internal bool PivotIsA;
 
+        // Visual-layout settings belong to the planet group, not to the whole output.
+        internal CompactWrapMode WrapMode = CompactWrapMode.Tiles;
+        internal int WrapEveryTiles = 32;
+        internal double WrapEveryBeats = 16.0;
+        internal int RepeatCount = 1;
+        internal bool ReuseRepeatPath;
+
+        // Keep the in-progress text per group so switching tabs does not destroy edits.
+        internal string WrapTilesText = "32";
+        internal string WrapBeatsText = "16";
+        internal string RepeatCountText = "1";
+
         internal TrackSlot(string name, LevelData data, int cursorFloor)
         {
             Name = name;
@@ -22,6 +34,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             CursorFloor = cursorFloor;
             RegionStartFloor = cursorFloor;
             PivotIsA = false;
+            ReuseRepeatPath = false;
         }
 
         internal AngleSample CurrentAngle
