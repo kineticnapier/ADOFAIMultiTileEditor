@@ -6,6 +6,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 {
     internal sealed class TrackSlot
     {
+        private static readonly Dictionary<int, TrackSlot> Registered = new Dictionary<int, TrackSlot>();
+
         internal string Name;
         internal LevelData Data;
         internal int CursorFloor;
@@ -15,14 +17,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal string PlanetBTag = "";
         internal bool PivotIsA;
 
-        // Visual-layout settings belong to the planet group, not to the whole output.
+        // Visual-layout / virtual-repeat settings belong to each planet group.
         internal CompactWrapMode WrapMode = CompactWrapMode.Tiles;
         internal int WrapEveryTiles = 32;
         internal double WrapEveryBeats = 16.0;
         internal int RepeatCount = 1;
         internal bool ReuseRepeatPath;
 
-        // Keep the in-progress text per group so switching tabs does not destroy edits.
+        // Keep in-progress text per group so switching tabs does not destroy edits.
         internal string WrapTilesText = "32";
         internal string WrapBeatsText = "16";
         internal string RepeatCountText = "1";
@@ -34,7 +36,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             CursorFloor = cursorFloor;
             RegionStartFloor = cursorFloor;
             PivotIsA = false;
-            ReuseRepeatPath = false;
+            // Virtual repetition is harmless at x1 and makes entering xN enough to use it.
+            ReuseRepeatPath = true;
         }
 
         internal AngleSample CurrentAngle
@@ -56,6 +59,24 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     && !string.Equals(PlanetATag.Trim(), PlanetBTag.Trim(), StringComparison.Ordinal);
             }
         }
+
+        internal int EffectiveRepeatCount
+        {
+            get { return ReuseRepeatPath ? Math.Max(1, RepeatCount) : 1; }
+        }
+
+        internal static bool TryGetRegistered(int index, out TrackSlot slot)
+        {
+            return Registered.TryGetValue(index, out slot) && slot != null;
+        }
+
+        internal static void ReplaceRegistration(IList<TrackSlot> tracks)
+        {
+            Registered.Clear();
+            if (tracks == null) return;
+            for (int i = 0; i < tracks.Count; i++)
+                if (tracks[i] != null) Registered[i] = tracks[i];
+        }
     }
 
     internal sealed class TrackStore
@@ -70,6 +91,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             tracks.Clear();
             activeIndex = -1;
+            TrackSlot.ReplaceRegistration(tracks);
         }
 
         internal void DetachActive()
@@ -90,6 +112,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             tracks.Add(slot);
             activeIndex = tracks.Count - 1;
             ClampFloors(slot);
+            TrackSlot.ReplaceRegistration(tracks);
             return activeIndex;
         }
 
@@ -103,6 +126,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             int selected = GameAngleProbe.TryGetCurrentFloorIndex(editor);
             if (selected >= 0) track.CursorFloor = selected;
             ClampFloors(track);
+            TrackSlot.ReplaceRegistration(tracks);
         }
 
         internal void SetActiveRegionStartFromSelection(scnEditor editor)
@@ -129,6 +153,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             activeIndex = index;
             tracks[index].Angles = GameAngleProbe.Capture(editor);
             ClampFloors(tracks[index]);
+            TrackSlot.ReplaceRegistration(tracks);
 
             int floor = tracks[index].CursorFloor;
             if (floor >= 0 && floor < editor.floors.Count)
@@ -144,6 +169,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (tracks.Count == 0)
             {
                 activeIndex = -1;
+                TrackSlot.ReplaceRegistration(tracks);
                 return;
             }
 
@@ -155,6 +181,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 tracks[activeIndex].Angles = GameAngleProbe.Capture(editor);
                 ClampFloors(tracks[activeIndex]);
             }
+            TrackSlot.ReplaceRegistration(tracks);
         }
 
         internal static void RestoreSnapshot(scnEditor editor, LevelData snapshot, bool updateDecorations)
