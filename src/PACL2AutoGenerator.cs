@@ -34,6 +34,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 LevelData prepared = original.Copy();
                 int createdPlanets = EnsurePlanetDecorations(prepared, plan);
+                bool createdOrbitTemplate = EnsureOrbitTemplate(prepared, plan);
 
                 TrackStore.RestoreSnapshot(editor, prepared, true);
                 OrbitCommitResult result = OrbitEmitter.GenerateAndCommit(
@@ -43,7 +44,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 editor.UpdateDecorationObjects();
 
                 result.Diagnostic += " Auto setup at F" + plan.RegionStartFloor + " created " + createdPlanets
-                    + " planet decoration(s); Orbit actions were created through ADOFAI.EditorToolkit metadata conversion.";
+                    + " planet decoration(s)"
+                    + (createdOrbitTemplate ? " and an internal Orbit template" : "")
+                    + "; generated event properties were typed by ADOFAI.EditorToolkit metadata conversion.";
 
                 success = true;
                 return result;
@@ -137,6 +140,53 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             SetOptional(ev, "syncFloorDepth", false);
             SetOptional(ev, "parallax", Vector2.zero);
             SetOptional(ev, "parallaxOffset", Vector2.zero);
+        }
+
+        private static bool EnsureOrbitTemplate(LevelData levelData, GenerationPlan plan)
+        {
+            IList actions = levelData.levelEvents as IList;
+            if (actions == null)
+                throw new InvalidOperationException("LevelData.levelEvents is not list-compatible in this game build.");
+
+            for (int i = 0; i < actions.Count; i++)
+            {
+                LevelEvent ev = actions[i] as LevelEvent;
+                if (ev != null && IsEventNamed(ev, "OrbitDecoration") && IsConfiguredOrbitPair(ev, plan))
+                    return false;
+            }
+
+            if (plan.Tracks.Count == 0 || plan.Tracks[0].Segments.Count == 0)
+                throw new InvalidOperationException("The analyzed plan has no segment available for an Orbit template.");
+
+            TrackSegment segment = plan.Tracks[0].Segments[0];
+            EditorToolkitBridge.EventsFor(levelData)
+                .Create("OrbitDecoration", plan.RegionStartFloor, EventCollection.Actions)
+                .Set("duration", segment.DurationBeats)
+                .Set("tag", segment.MovingTag)
+                .Set("centerTag", segment.CenterTag)
+                .Set("amount", segment.AmountDegrees)
+                .Set("lockRotation", false)
+                .Set("dstRadiusMultiplier", 1.0)
+                .Set("ease", "Linear")
+                .Set("angleOffset", 0.0)
+                .Set("eventTag", "");
+            return true;
+        }
+
+        private static bool IsConfiguredOrbitPair(LevelEvent ev, GenerationPlan plan)
+        {
+            string moving = Convert.ToString(SafeGetData(ev, "tag"), CultureInfo.InvariantCulture) ?? "";
+            string center = Convert.ToString(SafeGetData(ev, "centerTag"), CultureInfo.InvariantCulture) ?? "";
+            moving = moving.Trim();
+            center = center.Trim();
+            for (int i = 0; i < plan.Tracks.Count; i++)
+            {
+                AnalyzedTrack track = plan.Tracks[i];
+                if ((moving == track.PlanetATag && center == track.PlanetBTag)
+                    || (moving == track.PlanetBTag && center == track.PlanetATag))
+                    return true;
+            }
+            return false;
         }
 
         private static void SetOptional(EventHandle ev, string key, object value)
