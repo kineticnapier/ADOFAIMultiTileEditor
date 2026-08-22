@@ -2,6 +2,7 @@ param(
     [string]$GameDir = "C:\Program Files (x86)\Steam\steamapps\common\A Dance of Fire and Ice",
     [string]$GameManagedDir = "",
     [string]$UmmDir = "",
+    [string]$EditorToolkitRoot = "",
     [string]$Configuration = "Release"
 )
 $ErrorActionPreference = "Stop"
@@ -18,6 +19,15 @@ if ([string]::IsNullOrWhiteSpace($UmmDir)) {
     $UmmDir = $candidates | Where-Object { Test-Path (Join-Path $_ "UnityModManager.dll") } | Select-Object -First 1
 }
 if ([string]::IsNullOrWhiteSpace($UmmDir)) { throw "UnityModManager.dll not found. Pass -UmmDir." }
+
+if ([string]::IsNullOrWhiteSpace($EditorToolkitRoot)) {
+    $EditorToolkitRoot = Join-Path (Split-Path $PSScriptRoot -Parent) "AdofaiEditorToolkit"
+}
+$toolkitCoreProject = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit\ADOFAI.EditorToolkit.csproj"
+$toolkitGameProject = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit.ADOFAI\ADOFAI.EditorToolkit.ADOFAI.csproj"
+if (-not (Test-Path $toolkitCoreProject) -or -not (Test-Path $toolkitGameProject)) {
+    throw "AdofaiEditorToolkit source not found at '$EditorToolkitRoot'. Clone https://github.com/kineticnapier/AdofaiEditorToolkit next to this repository or pass -EditorToolkitRoot."
+}
 
 $required = @(
     "Assembly-CSharp.dll",
@@ -38,11 +48,16 @@ if (-not $msbuild) {
 if (-not $msbuild) { throw "msbuild.exe not found. Install Visual Studio Build Tools (.NET desktop build tools)." }
 
 $project = Join-Path $PSScriptRoot "src\ADOFAIMultiTileEditor.csproj"
-& $msbuild $project /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:UmmDir="$UmmDir"
+& $msbuild $project /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:UmmDir="$UmmDir" /p:EditorToolkitRoot="$EditorToolkitRoot"
 if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
 
-$dll = Join-Path $PSScriptRoot "src\bin\$Configuration\ADOFAIMultiTileEditor.dll"
-if (-not (Test-Path $dll)) { throw "Expected DLL was not produced: $dll" }
+$binDir = Join-Path $PSScriptRoot "src\bin\$Configuration"
+$dll = Join-Path $binDir "ADOFAIMultiTileEditor.dll"
+$toolkitCoreDll = Join-Path $binDir "ADOFAI.EditorToolkit.dll"
+$toolkitGameDll = Join-Path $binDir "ADOFAI.EditorToolkit.ADOFAI.dll"
+foreach ($p in @($dll, $toolkitCoreDll, $toolkitGameDll)) {
+    if (-not (Test-Path $p)) { throw "Expected DLL was not produced/copied: $p" }
+}
 
 $infoPath = Join-Path $PSScriptRoot "Info.json"
 $info = Get-Content $infoPath -Raw | ConvertFrom-Json
@@ -53,6 +68,8 @@ $out = Join-Path $PSScriptRoot "release\ADOFAIMultiTileEditor"
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 Copy-Item $dll $out
+Copy-Item $toolkitCoreDll $out
+Copy-Item $toolkitGameDll $out
 Copy-Item $infoPath $out
 
 $zip = Join-Path $PSScriptRoot ("ADOFAIMultiTileEditor-v{0}.zip" -f $version)
