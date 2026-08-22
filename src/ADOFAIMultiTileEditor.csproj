@@ -12,6 +12,7 @@
     <DebugType>portable</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\$(Configuration)\</OutputPath>
+    <EditorToolkitRoot Condition=" '$(EditorToolkitRoot)' == '' ">$(MSBuildThisFileDirectory)..\..\AdofaiEditorToolkit</EditorToolkitRoot>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,6 +23,19 @@
     <Reference Include="UnityModManager"><HintPath>$(UmmDir)\UnityModManager.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit\ADOFAI.EditorToolkit.csproj">
+      <Project>{747F2A69-144F-49C4-B827-33DE5C0A1802}</Project>
+      <Name>ADOFAI.EditorToolkit</Name>
+      <Private>True</Private>
+    </ProjectReference>
+    <ProjectReference Include="$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit.ADOFAI\ADOFAI.EditorToolkit.ADOFAI.csproj">
+      <Project>{7B596ECD-54F2-4B95-BE69-D137CC7C6B07}</Project>
+      <Name>ADOFAI.EditorToolkit.ADOFAI</Name>
+      <Private>True</Private>
+    </ProjectReference>
   </ItemGroup>
 
   <ItemGroup>
