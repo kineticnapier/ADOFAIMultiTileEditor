@@ -2,6 +2,7 @@ using System;
 using ADOFAI;
 using ADOFAI.EditorToolkit;
 using ADOFAI.EditorToolkit.Game;
+using ToolkitEditor = ADOFAI.EditorToolkit.Editor;
 
 namespace KineticNapier.ADOFAIMultiTileEditor
 {
@@ -11,12 +12,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             if (level == null) throw new ArgumentNullException(nameof(level));
             EnsureConfigured();
-            return Editor.Events.ForLevel(level);
+            return ToolkitEditor.Events.ForLevel(level);
         }
 
         internal static void EnsureConfigured()
         {
-            if (!Editor.IsConfigured)
+            if (!ToolkitEditor.IsConfigured)
                 ADOFAIEditorBackend.ConfigureToolkit();
         }
     }
