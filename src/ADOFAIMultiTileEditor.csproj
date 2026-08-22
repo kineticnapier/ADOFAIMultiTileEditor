@@ -50,6 +50,7 @@
     <Compile Include="MasterPathBuilder.cs" />
     <Compile Include="PositionGeometryPlanner.cs" />
     <Compile Include="CompactLayoutPostProcessor.cs" />
+    <Compile Include="EditorToolkitBridge.cs" />
     <Compile Include="OrbitEmitter.cs" />
     <Compile Include="PACL2AutoGenerator.cs" />
     <Compile Include="MasterOutputGenerator.cs" />
