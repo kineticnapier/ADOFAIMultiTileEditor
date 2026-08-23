@@ -91,7 +91,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static void Rebuild()
         {
             EnsureHost();
-            if (frame != null) UnityEngine.Object.Destroy(frame.gameObject);
+            if (frame != null)
+            {
+                frame.gameObject.SetActive(false);
+                UnityEngine.Object.Destroy(frame.gameObject);
+                frame = null;
+            }
 
             frame = CreateRect(host, "WorkspaceFrame");
             Stretch(frame, Vector2.zero, Vector2.zero);
@@ -229,7 +234,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
             else
             {
-                RectTransform shade = CreatePanel(content, "SnapshotPlaceholder", new Color(0.08f, 0.09f, 0.12f, 0.76f), false, null);
+                RectTransform shade = CreatePanel(content, "SnapshotPlaceholder", new Color(0.08f, 0.09f, 0.12f, 0.96f), false, null);
                 Stretch(shade, new Vector2(2f, 2f), new Vector2(-2f, -2f));
                 string title = active != null ? active.Title : "No document";
                 CreateLabel(shade, "SnapshotTitle", "SNAPSHOT  " + title, 12f, 12f, 330f, 26f, 16f);
@@ -287,19 +292,17 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             for (int i = 0; i < cameras.Length; i++)
             {
                 Camera camera = cameras[i];
-                if (!IsEditorWorldCamera(camera)) continue;
+                if (!IsViewportCamera(camera)) continue;
                 if (!originalCameraRects.ContainsKey(camera)) originalCameraRects.Add(camera, camera.rect);
                 camera.rect = normalized;
             }
         }
 
-        private static bool IsEditorWorldCamera(Camera camera)
+        private static bool IsViewportCamera(Camera camera)
         {
             if (camera == null || camera.targetTexture != null) return false;
             string path = PathOf(camera.transform);
             return string.Equals(path, "/CamParent/Camera", StringComparison.Ordinal)
-                || string.Equals(path, "/CamParent/Camera/BGMovingCam", StringComparison.Ordinal)
-                || string.Equals(path, "/CamParent/Camera/BGStaticCam", StringComparison.Ordinal)
                 || string.Equals(path, "/CamParent/Camera/OverlayCam", StringComparison.Ordinal);
         }
 
@@ -381,20 +384,24 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static RectTransform CreatePanel(Transform parent, string name, Color color, bool interactive, Action callback)
         {
-            GameObject panel = ADOFAIEditorUiHost.CloneStockObject("buttonSave", parent, name);
-            RectTransform rect = panel.transform as RectTransform;
-            if (rect == null) throw new InvalidOperationException("Stock button template is not a RectTransform.");
+            RectTransform rect = CreateRect(parent, name);
+            GameObject go = rect.gameObject;
 
-            RemoveTemplateTextBehaviours(panel);
-            SetText(panel, "");
-            SetImageColor(panel, color);
+            Type imageType = FindLoadedType("UnityEngine.UI.Image");
+            if (imageType == null) throw new InvalidOperationException("UnityEngine.UI.Image is not available.");
+            Component image = go.AddComponent(imageType);
+            SetProperty(image, "color", color);
+            SetProperty(image, "raycastTarget", interactive);
 
             if (interactive && callback != null)
-                BindButton(panel, callback);
-            else
-                RemoveComponentByName(panel, "UnityEngine.UI.Button");
+            {
+                Type buttonType = FindLoadedType("UnityEngine.UI.Button");
+                if (buttonType == null) throw new InvalidOperationException("UnityEngine.UI.Button is not available.");
+                Component button = go.AddComponent(buttonType);
+                SetProperty(button, "targetGraphic", image);
+                BindButton(go, callback);
+            }
 
-            SetRaycast(panel, interactive);
             return rect;
         }
 
@@ -409,16 +416,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             Action callback,
             bool selected)
         {
-            GameObject button = ADOFAIEditorUiHost.CloneStockObject("buttonSave", parent, name);
-            RectTransform rect = button.transform as RectTransform;
-            if (rect == null) throw new InvalidOperationException("Stock button template is not a RectTransform.");
+            Color color = selected
+                ? new Color(0.28f, 0.34f, 0.46f, 0.98f)
+                : new Color(0.19f, 0.20f, 0.24f, 0.98f);
 
-            RemoveTemplateTextBehaviours(button);
+            RectTransform rect = CreatePanel(parent, name, color, true, callback);
             SetTopLeft(rect, x, y, width, height);
-            SetText(button, text);
-            SetFontSize(button, 14f);
-            BindButton(button, callback);
-            if (selected) SetImageColor(button, new Color(0.28f, 0.34f, 0.46f, 0.98f));
+            CreateLabel(rect, "Text", text, 0f, 0f, width, height, 14f);
             return rect;
         }
 
@@ -449,7 +453,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static void BindButton(GameObject root, Action callback)
         {
             Component button = FindComponent(root, "UnityEngine.UI.Button");
-            if (button == null) throw new InvalidOperationException("Stock button clone has no UnityEngine.UI.Button component.");
+            if (button == null) throw new InvalidOperationException("Button object has no UnityEngine.UI.Button component.");
 
             System.Reflection.PropertyInfo onClickProperty = button.GetType().GetProperty("onClick");
             object onClick = onClickProperty != null ? onClickProperty.GetValue(button, null) : null;
@@ -486,6 +490,31 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             return null;
         }
 
+        private static Type FindLoadedType(string fullName)
+        {
+            System.Reflection.Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            for (int i = 0; i < assemblies.Length; i++)
+            {
+                Type type = assemblies[i].GetType(fullName, false);
+                if (type != null) return type;
+            }
+            return null;
+        }
+
+        private static void SetProperty(Component component, string name, object value)
+        {
+            if (component == null) return;
+            try
+            {
+                System.Reflection.PropertyInfo property = component.GetType().GetProperty(name);
+                if (property != null && property.CanWrite) property.SetValue(component, value, null);
+            }
+            catch
+            {
+                // Best-effort styling only.
+            }
+        }
+
         private static void RemoveComponentByName(GameObject root, string fullName)
         {
             Component[] components = root.GetComponentsInChildren<Component>(true);
@@ -495,14 +524,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (component != null && string.Equals(component.GetType().FullName, fullName, StringComparison.Ordinal))
                     UnityEngine.Object.Destroy(component);
             }
-        }
-
-        private static void RemoveTemplateTextBehaviours(GameObject root)
-        {
-            RemoveComponentByName(root, "scrShortcutText");
-            RemoveComponentByName(root, "scrTextChanger");
-            RemoveComponentByName(root, "UnityEngine.UI.ContentSizeFitter");
-            RemoveComponentByName(root, "UnityEngine.UI.LayoutElement");
         }
 
         private static void SetText(GameObject root, string value)
@@ -529,15 +550,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (property == null || !property.CanWrite || property.PropertyType != typeof(float)) continue;
                 try { property.SetValue(component, value, null); } catch { }
             }
-        }
-
-        private static void SetImageColor(GameObject root, Color color)
-        {
-            Component image = FindComponent(root, "UnityEngine.UI.Image");
-            if (image == null) return;
-            System.Reflection.PropertyInfo property = image.GetType().GetProperty("color");
-            if (property != null && property.CanWrite && property.PropertyType == typeof(Color))
-                property.SetValue(image, color, null);
         }
 
         private static void SetRaycast(GameObject root, bool value)
