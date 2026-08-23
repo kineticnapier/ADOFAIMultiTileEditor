@@ -35,6 +35,7 @@
     <Compile Include="MultiTileWorkspace.cs" />
     <Compile Include="WorkspaceGui.cs" />
     <Compile Include="WorkspacePreviewRenderer.cs" />
+    <Compile Include="EditorUiProbe.cs" />
     <Compile Include="TrackStore.cs" />
     <Compile Include="GameAngleProbe.cs" />
     <Compile Include="TrackAnalysis.cs" />
