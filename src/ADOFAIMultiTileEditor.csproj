@@ -32,11 +32,13 @@
   <ItemGroup>
     <Compile Include="Main.cs" />
     <Compile Include="MultiTileOverlay.cs" />
+    <Compile Include="ParallelEditorModel.cs" />
+    <Compile Include="MultiTileParallelDocumentProvider.cs" />
+    <Compile Include="NativeParallelWorkspace.cs" />
     <Compile Include="MultiTileWorkspace.cs" />
     <Compile Include="WorkspaceGui.cs" />
     <Compile Include="WorkspacePreviewRenderer.cs" />
     <Compile Include="EditorUiProbe.cs" />
-    <Compile Include="NativeMountSmokeTest.cs" />
     <Compile Include="TrackStore.cs" />
     <Compile Include="GameAngleProbe.cs" />
     <Compile Include="TrackAnalysis.cs" />
