@@ -38,6 +38,9 @@ $required = @(
 $required += Join-Path $UmmDir "UnityModManager.dll"
 foreach ($p in $required) { if (-not (Test-Path $p)) { throw "Required reference not found: $p" } }
 
+$dotnet = (Get-Command dotnet.exe -ErrorAction SilentlyContinue).Path
+if (-not $dotnet) { throw "dotnet.exe not found. Install .NET SDK 8 or later." }
+
 $msbuild = (Get-Command msbuild.exe -ErrorAction SilentlyContinue).Path
 if (-not $msbuild) {
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -47,17 +50,28 @@ if (-not $msbuild) {
 }
 if (-not $msbuild) { throw "msbuild.exe not found. Install Visual Studio Build Tools (.NET desktop build tools)." }
 
+Write-Host "Building EditorToolkit core with dotnet..."
+& $dotnet build $toolkitCoreProject -c $Configuration --nologo
+if ($LASTEXITCODE -ne 0) { throw "EditorToolkit core build failed with exit code $LASTEXITCODE" }
+
+$toolkitCoreDll = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit\bin\$Configuration\netstandard2.0\ADOFAI.EditorToolkit.dll"
+if (-not (Test-Path $toolkitCoreDll)) { throw "EditorToolkit core DLL was not produced: $toolkitCoreDll" }
+
+Write-Host "Building EditorToolkit ADOFAI adapter with MSBuild..."
+& $msbuild $toolkitGameProject /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:EditorToolkitCoreDll="$toolkitCoreDll"
+if ($LASTEXITCODE -ne 0) { throw "EditorToolkit adapter build failed with exit code $LASTEXITCODE" }
+
+$toolkitGameDll = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit.ADOFAI\bin\$Configuration\ADOFAI.EditorToolkit.ADOFAI.dll"
+if (-not (Test-Path $toolkitGameDll)) { throw "EditorToolkit adapter DLL was not produced: $toolkitGameDll" }
+
+Write-Host "Building MultiTileEditor..."
 $project = Join-Path $PSScriptRoot "src\ADOFAIMultiTileEditor.csproj"
-& $msbuild $project /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:UmmDir="$UmmDir" /p:EditorToolkitRoot="$EditorToolkitRoot"
-if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
+& $msbuild $project /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:UmmDir="$UmmDir" /p:EditorToolkitRoot="$EditorToolkitRoot" /p:EditorToolkitCoreDll="$toolkitCoreDll" /p:EditorToolkitGameDll="$toolkitGameDll"
+if ($LASTEXITCODE -ne 0) { throw "MultiTileEditor build failed with exit code $LASTEXITCODE" }
 
 $binDir = Join-Path $PSScriptRoot "src\bin\$Configuration"
 $dll = Join-Path $binDir "ADOFAIMultiTileEditor.dll"
-$toolkitCoreDll = Join-Path $binDir "ADOFAI.EditorToolkit.dll"
-$toolkitGameDll = Join-Path $binDir "ADOFAI.EditorToolkit.ADOFAI.dll"
-foreach ($p in @($dll, $toolkitCoreDll, $toolkitGameDll)) {
-    if (-not (Test-Path $p)) { throw "Expected DLL was not produced/copied: $p" }
-}
+if (-not (Test-Path $dll)) { throw "Expected DLL was not produced: $dll" }
 
 $infoPath = Join-Path $PSScriptRoot "Info.json"
 $info = Get-Content $infoPath -Raw | ConvertFrom-Json
