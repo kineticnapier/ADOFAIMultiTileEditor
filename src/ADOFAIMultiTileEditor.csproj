@@ -12,6 +12,9 @@
     <DebugType>portable</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\$(Configuration)\</OutputPath>
+    <EditorToolkitRoot Condition=" '$(EditorToolkitRoot)' == '' ">$(MSBuildThisFileDirectory)..\..\AdofaiEditorToolkit</EditorToolkitRoot>
+    <EditorToolkitCoreDll Condition=" '$(EditorToolkitCoreDll)' == '' ">$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit\bin\$(Configuration)\net48\ADOFAI.EditorToolkit.dll</EditorToolkitCoreDll>
+    <EditorToolkitGameDll Condition=" '$(EditorToolkitGameDll)' == '' ">$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit.ADOFAI\bin\$(Configuration)\ADOFAI.EditorToolkit.ADOFAI.dll</EditorToolkitGameDll>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,6 +23,8 @@
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameManagedDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(GameManagedDir)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityModManager"><HintPath>$(UmmDir)\UnityModManager.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="ADOFAI.EditorToolkit"><HintPath>$(EditorToolkitCoreDll)</HintPath><Private>true</Private></Reference>
+    <Reference Include="ADOFAI.EditorToolkit.ADOFAI"><HintPath>$(EditorToolkitGameDll)</HintPath><Private>true</Private></Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
   </ItemGroup>
@@ -36,6 +41,7 @@
     <Compile Include="MasterPathBuilder.cs" />
     <Compile Include="PositionGeometryPlanner.cs" />
     <Compile Include="CompactLayoutPostProcessor.cs" />
+    <Compile Include="EditorToolkitBridge.cs" />
     <Compile Include="OrbitEmitter.cs" />
     <Compile Include="PACL2AutoGenerator.cs" />
     <Compile Include="MasterOutputGenerator.cs" />
