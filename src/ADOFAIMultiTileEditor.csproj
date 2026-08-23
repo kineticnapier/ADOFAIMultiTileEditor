@@ -13,6 +13,8 @@
     <Optimize>true</Optimize>
     <OutputPath>bin\$(Configuration)\</OutputPath>
     <EditorToolkitRoot Condition=" '$(EditorToolkitRoot)' == '' ">$(MSBuildThisFileDirectory)..\..\AdofaiEditorToolkit</EditorToolkitRoot>
+    <EditorToolkitCoreDll Condition=" '$(EditorToolkitCoreDll)' == '' ">$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit\bin\$(Configuration)\netstandard2.0\ADOFAI.EditorToolkit.dll</EditorToolkitCoreDll>
+    <EditorToolkitGameDll Condition=" '$(EditorToolkitGameDll)' == '' ">$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit.ADOFAI\bin\$(Configuration)\ADOFAI.EditorToolkit.ADOFAI.dll</EditorToolkitGameDll>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,21 +23,11 @@
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameManagedDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(GameManagedDir)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityModManager"><HintPath>$(UmmDir)\UnityModManager.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="ADOFAI.EditorToolkit"><HintPath>$(EditorToolkitCoreDll)</HintPath><Private>true</Private></Reference>
+    <Reference Include="ADOFAI.EditorToolkit.ADOFAI"><HintPath>$(EditorToolkitGameDll)</HintPath><Private>true</Private></Reference>
+    <Reference Include="netstandard" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit\ADOFAI.EditorToolkit.csproj">
-      <Project>{747F2A69-144F-49C4-B827-33DE5C0A1802}</Project>
-      <Name>ADOFAI.EditorToolkit</Name>
-      <Private>True</Private>
-    </ProjectReference>
-    <ProjectReference Include="$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit.ADOFAI\ADOFAI.EditorToolkit.ADOFAI.csproj">
-      <Project>{7B596ECD-54F2-4B95-BE69-D137CC7C6B07}</Project>
-      <Name>ADOFAI.EditorToolkit.ADOFAI</Name>
-      <Private>True</Private>
-    </ProjectReference>
   </ItemGroup>
 
   <ItemGroup>
