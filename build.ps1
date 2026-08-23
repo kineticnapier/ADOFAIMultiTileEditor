@@ -40,6 +40,13 @@ if (-not (Test-Path $toolkitCoreProject) -or -not (Test-Path $toolkitGameProject
     throw "AdofaiEditorToolkit source is incomplete at '$EditorToolkitRoot'."
 }
 
+# MTE's Unity host uses the Toolkit's net48 target. Detect an old local Toolkit checkout
+# before dotnet emits the much less useful NETSDK1005 project.assets.json error.
+$toolkitProjectText = Get-Content $toolkitCoreProject -Raw
+if ($toolkitProjectText -notmatch '(?i)(^|[;>])net48([;<]|$)') {
+    throw "Your local AdofaiEditorToolkit checkout does not contain the net48 target. Run: git -C `"$EditorToolkitRoot`" pull --ff-only"
+}
+
 $required = @(
     "Assembly-CSharp.dll",
     "RDTools.dll",
@@ -62,8 +69,12 @@ if (-not $msbuild) {
 if (-not $msbuild) { throw "msbuild.exe not found. Install Visual Studio Build Tools (.NET desktop build tools)." }
 
 Write-Host "EditorToolkit: $EditorToolkitRoot"
+Write-Host "Restoring EditorToolkit targets..."
+& $dotnet restore $toolkitCoreProject --force --nologo
+if ($LASTEXITCODE -ne 0) { throw "EditorToolkit restore failed with exit code $LASTEXITCODE" }
+
 Write-Host "Building EditorToolkit core for .NET Framework 4.8..."
-& $dotnet build $toolkitCoreProject -c $Configuration -f net48 --nologo
+& $dotnet build $toolkitCoreProject -c $Configuration -f net48 --no-restore --nologo
 if ($LASTEXITCODE -ne 0) { throw "EditorToolkit core build failed with exit code $LASTEXITCODE" }
 
 $toolkitCoreDll = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit\bin\$Configuration\net48\ADOFAI.EditorToolkit.dll"
