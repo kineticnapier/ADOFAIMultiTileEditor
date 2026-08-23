@@ -13,6 +13,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private bool resizing;
         private Vector2 resizeMouseStart;
         private Rect resizeRectStart;
+        private string probeStatus = "";
         internal bool Visible = true;
 
         internal void ResetPosition()
@@ -38,7 +39,21 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private void DrawWindow(int id)
         {
             scnEditor editor = ADOBase.editor;
-            WorkspaceGui.DrawWindow(editor, windowRect.width, windowRect.height);
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("ParallelEditor research", GUILayout.Width(135f));
+            if (GUILayout.Button("Probe ADOFAI UI", GUILayout.Width(120f)))
+            {
+                string report = EditorUiProbe.Capture(editor);
+                GUIUtility.systemCopyBuffer = report;
+                Debug.Log(report);
+                probeStatus = "Copied " + report.Split('\n').Length + " lines to clipboard + Unity log.";
+            }
+            if (!string.IsNullOrEmpty(probeStatus)) GUILayout.Label(probeStatus);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            WorkspaceGui.DrawWindow(editor, windowRect.width, Mathf.Max(1f, windowRect.height - 26f));
 
             Rect grip = new Rect(windowRect.width - 18f, windowRect.height - 18f, 16f, 16f);
             GUI.Box(grip, "//");
