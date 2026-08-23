@@ -47,6 +47,14 @@ if ($toolkitProjectText -notmatch '(?i)(^|[;>])net48([;<]|$)') {
     throw "Your local AdofaiEditorToolkit checkout does not contain the net48 target. Run: git -C `"$EditorToolkitRoot`" pull --ff-only"
 }
 
+# The native mount smoke test depends on the ADOFAI-specific host currently living on
+# Toolkit's feature/editor-ui-host branch. Fail early with an actionable message when
+# the neighbouring checkout is still on main/another older branch.
+$toolkitUiHost = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit.ADOFAI\ADOFAIEditorUiHost.cs"
+if (-not (Test-Path $toolkitUiHost)) {
+    throw "This MTE branch requires AdofaiEditorToolkit feature/editor-ui-host. Run: git -C `"$EditorToolkitRoot`" fetch origin feature/editor-ui-host; git -C `"$EditorToolkitRoot`" switch feature/editor-ui-host; git -C `"$EditorToolkitRoot`" pull --ff-only"
+}
+
 $required = @(
     "Assembly-CSharp.dll",
     "RDTools.dll",
