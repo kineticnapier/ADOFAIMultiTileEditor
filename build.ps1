@@ -62,11 +62,11 @@ if (-not $msbuild) {
 if (-not $msbuild) { throw "msbuild.exe not found. Install Visual Studio Build Tools (.NET desktop build tools)." }
 
 Write-Host "EditorToolkit: $EditorToolkitRoot"
-Write-Host "Building EditorToolkit core with dotnet..."
-& $dotnet build $toolkitCoreProject -c $Configuration --nologo
+Write-Host "Building EditorToolkit core for .NET Framework 4.8..."
+& $dotnet build $toolkitCoreProject -c $Configuration -f net48 --nologo
 if ($LASTEXITCODE -ne 0) { throw "EditorToolkit core build failed with exit code $LASTEXITCODE" }
 
-$toolkitCoreDll = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit\bin\$Configuration\netstandard2.0\ADOFAI.EditorToolkit.dll"
+$toolkitCoreDll = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit\bin\$Configuration\net48\ADOFAI.EditorToolkit.dll"
 if (-not (Test-Path $toolkitCoreDll)) { throw "EditorToolkit core DLL was not produced: $toolkitCoreDll" }
 
 Write-Host "Building EditorToolkit ADOFAI adapter with MSBuild..."
