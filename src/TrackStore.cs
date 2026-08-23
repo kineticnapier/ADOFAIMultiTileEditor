@@ -83,9 +83,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
     internal sealed class TrackStore
     {
+        private static TrackStore current;
         private readonly List<TrackSlot> tracks = new List<TrackSlot>();
         private int activeIndex = -1;
 
+        internal TrackStore()
+        {
+            current = this;
+        }
+
+        internal static TrackStore Current { get { return current; } }
         internal IList<TrackSlot> Tracks { get { return tracks; } }
         internal int ActiveIndex { get { return activeIndex; } }
 
