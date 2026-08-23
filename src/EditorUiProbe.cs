@@ -18,36 +18,28 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         internal static string Capture(scnEditor editor)
         {
-            var output = new StringBuilder(64 * 1024);
-            int lines = 0;
+            var sink = new LineSink(MaxLines);
 
-            Action<string> add = delegate(string value)
-            {
-                if (lines >= MaxLines) return;
-                output.AppendLine(value ?? "");
-                lines++;
-            };
-
-            add("=== ADOFAI Parallel Editor UI probe ===");
-            add("Unity: " + Application.unityVersion);
-            add("Game: " + Application.version);
-            add("Resolution: " + Screen.width + "x" + Screen.height);
-            add("");
+            sink.Add("=== ADOFAI Parallel Editor UI probe ===");
+            sink.Add("Unity: " + Application.unityVersion);
+            sink.Add("Game: " + Application.version);
+            sink.Add("Resolution: " + Screen.width + "x" + Screen.height);
+            sink.Add("");
 
             if (editor == null)
             {
-                add("ADOBase.editor is null.");
-                return output.ToString();
+                sink.Add("ADOBase.editor is null.");
+                return sink.ToString();
             }
 
-            add("scnEditor object: " + SafePath(editor.transform));
-            add("scnEditor components: " + ComponentSummary(editor.gameObject));
-            add("scnEditor ancestry:");
+            sink.Add("scnEditor object: " + SafePath(editor.transform));
+            sink.Add("scnEditor components: " + ComponentSummary(editor.gameObject));
+            sink.Add("scnEditor ancestry:");
             Transform ancestor = editor.transform;
             int ancestorDepth = 0;
             while (ancestor != null && ancestorDepth < MaxDepth)
             {
-                add("  " + ancestorDepth + ": " + SafePath(ancestor) + "  [" + ComponentSummary(ancestor.gameObject) + "]");
+                sink.Add("  " + ancestorDepth + ": " + SafePath(ancestor) + "  [" + ComponentSummary(ancestor.gameObject) + "]");
                 ancestor = ancestor.parent;
                 ancestorDepth++;
             }
@@ -69,41 +61,39 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             canvases.Sort(CompareObjects);
             eventSystems.Sort(CompareObjects);
 
-            add("");
-            add("EventSystem candidates (" + eventSystems.Count + "):");
+            sink.Add("");
+            sink.Add("EventSystem candidates (" + eventSystems.Count + "):");
             for (int i = 0; i < eventSystems.Count; i++)
-                add("  " + DescribeObject(eventSystems[i]));
+                sink.Add("  " + DescribeObject(eventSystems[i]));
 
-            add("");
-            add("Canvas candidates (" + canvases.Count + "):");
+            sink.Add("");
+            sink.Add("Canvas candidates (" + canvases.Count + "):");
             for (int i = 0; i < canvases.Count; i++)
-                add("  C" + i + " " + DescribeObject(canvases[i]));
+                sink.Add("  C" + i + " " + DescribeObject(canvases[i]));
 
-            add("");
-            add("Canvas hierarchies:");
-            for (int i = 0; i < canvases.Count && lines < MaxLines; i++)
+            sink.Add("");
+            sink.Add("Canvas hierarchies:");
+            for (int i = 0; i < canvases.Count && !sink.Full; i++)
             {
                 GameObject canvas = canvases[i];
-                add("");
-                add("--- C" + i + " " + DescribeObject(canvas) + " ---");
-                DumpTree(canvas.transform, 0, add, ref lines);
+                sink.Add("");
+                sink.Add("--- C" + i + " " + DescribeObject(canvas) + " ---");
+                DumpTree(canvas.transform, 0, sink);
             }
 
-            if (lines >= MaxLines)
-                output.AppendLine("... output truncated at " + MaxLines + " lines ...");
-
-            return output.ToString();
+            if (sink.Full) sink.AppendRaw("... output truncated at " + MaxLines + " lines ...\n");
+            return sink.ToString();
         }
 
-        private static void DumpTree(Transform transform, int depth, Action<string> add, ref int lines)
+        private static void DumpTree(Transform transform, int depth, LineSink sink)
         {
-            if (transform == null || depth > MaxDepth || lines >= MaxLines) return;
+            if (transform == null || depth > MaxDepth || sink.Full) return;
 
-            var indent = new string(' ', depth * 2);
-            add(indent + "- " + DescribeObject(transform.gameObject));
+            string indent = new string(' ', depth * 2);
+            sink.Add(indent + "- " + DescribeObject(transform.gameObject));
 
-            for (int i = 0; i < transform.childCount && lines < MaxLines; i++)
-                DumpTree(transform.GetChild(i), depth + 1, add, ref lines);
+            for (int i = 0; i < transform.childCount && !sink.Full; i++)
+                DumpTree(transform.GetChild(i), depth + 1, sink);
         }
 
         private static string DescribeObject(GameObject go)
@@ -215,7 +205,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             bool leftActive = left != null && left.activeInHierarchy;
             bool rightActive = right != null && right.activeInHierarchy;
             if (leftActive != rightActive) return leftActive ? -1 : 1;
-            return string.Compare(SafePath(left != null ? left.transform : null), SafePath(right != null ? right.transform : null), StringComparison.OrdinalIgnoreCase);
+            return string.Compare(
+                SafePath(left != null ? left.transform : null),
+                SafePath(right != null ? right.transform : null),
+                StringComparison.OrdinalIgnoreCase);
         }
 
         private static string SafePath(Transform transform)
@@ -236,6 +229,37 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static string Vector(Vector2 value)
         {
             return "(" + value.x.ToString("0.###") + "," + value.y.ToString("0.###") + ")";
+        }
+
+        private sealed class LineSink
+        {
+            private readonly int maxLines;
+            private readonly StringBuilder builder = new StringBuilder(64 * 1024);
+            private int lines;
+
+            internal LineSink(int maxLines)
+            {
+                this.maxLines = Math.Max(1, maxLines);
+            }
+
+            internal bool Full { get { return lines >= maxLines; } }
+
+            internal void Add(string value)
+            {
+                if (Full) return;
+                builder.AppendLine(value ?? "");
+                lines++;
+            }
+
+            internal void AppendRaw(string value)
+            {
+                builder.Append(value ?? "");
+            }
+
+            public override string ToString()
+            {
+                return builder.ToString();
+            }
         }
     }
 }
