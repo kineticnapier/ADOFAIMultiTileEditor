@@ -14,7 +14,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private Vector2 resizeMouseStart;
         private Rect resizeRectStart;
         private string probeStatus = "";
-        private scnEditor nativeMountFailureEditor;
+        private scnEditor nativeWorkspaceFailureEditor;
         internal bool Visible = true;
 
         internal void ResetPosition()
@@ -25,33 +25,34 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private void OnEnable()
         {
-            nativeMountFailureEditor = null;
+            nativeWorkspaceFailureEditor = null;
         }
 
         private void OnDisable()
         {
-            NativeMountSmokeTest.SetVisible(false);
+            NativeParallelWorkspace.SetVisible(false);
         }
 
         private void Update()
         {
             if (!Main.OverlayCanDraw)
             {
-                NativeMountSmokeTest.SetVisible(false);
+                NativeParallelWorkspace.SetVisible(false);
                 return;
             }
 
             scnEditor editor = ADOBase.editor;
-            if (editor == null || editor == nativeMountFailureEditor) return;
+            if (editor == null || editor == nativeWorkspaceFailureEditor) return;
 
             try
             {
-                NativeMountSmokeTest.Mount(editor);
+                NativeParallelWorkspace.Update(editor);
             }
             catch (System.Exception ex)
             {
-                nativeMountFailureEditor = editor;
-                Debug.LogError("[ADOFAIMultiTileEditor] Native mount smoke test failed: " + ex);
+                nativeWorkspaceFailureEditor = editor;
+                NativeParallelWorkspace.SetVisible(false);
+                Debug.LogError("[ADOFAIMultiTileEditor] Native ParallelEditor workspace failed: " + ex);
             }
         }
 
