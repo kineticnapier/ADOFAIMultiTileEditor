@@ -21,12 +21,23 @@ if ([string]::IsNullOrWhiteSpace($UmmDir)) {
 if ([string]::IsNullOrWhiteSpace($UmmDir)) { throw "UnityModManager.dll not found. Pass -UmmDir." }
 
 if ([string]::IsNullOrWhiteSpace($EditorToolkitRoot)) {
-    $EditorToolkitRoot = Join-Path (Split-Path $PSScriptRoot -Parent) "AdofaiEditorToolkit"
+    $parent = Split-Path $PSScriptRoot -Parent
+    $toolkitCandidates = @(
+        (Join-Path $parent "AdofaiEditorToolkit"),
+        (Join-Path $parent "ADOFAI.EditorToolkit")
+    )
+    $EditorToolkitRoot = $toolkitCandidates | Where-Object {
+        Test-Path (Join-Path $_ "src\ADOFAI.EditorToolkit\ADOFAI.EditorToolkit.csproj")
+    } | Select-Object -First 1
 }
+if ([string]::IsNullOrWhiteSpace($EditorToolkitRoot)) {
+    throw "AdofaiEditorToolkit source not found next to this repository. Clone https://github.com/kineticnapier/AdofaiEditorToolkit or pass -EditorToolkitRoot."
+}
+
 $toolkitCoreProject = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit\ADOFAI.EditorToolkit.csproj"
 $toolkitGameProject = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit.ADOFAI\ADOFAI.EditorToolkit.ADOFAI.csproj"
 if (-not (Test-Path $toolkitCoreProject) -or -not (Test-Path $toolkitGameProject)) {
-    throw "AdofaiEditorToolkit source not found at '$EditorToolkitRoot'. Clone https://github.com/kineticnapier/AdofaiEditorToolkit next to this repository or pass -EditorToolkitRoot."
+    throw "AdofaiEditorToolkit source is incomplete at '$EditorToolkitRoot'."
 }
 
 $required = @(
@@ -50,6 +61,7 @@ if (-not $msbuild) {
 }
 if (-not $msbuild) { throw "msbuild.exe not found. Install Visual Studio Build Tools (.NET desktop build tools)." }
 
+Write-Host "EditorToolkit: $EditorToolkitRoot"
 Write-Host "Building EditorToolkit core with dotnet..."
 & $dotnet build $toolkitCoreProject -c $Configuration --nologo
 if ($LASTEXITCODE -ne 0) { throw "EditorToolkit core build failed with exit code $LASTEXITCODE" }
