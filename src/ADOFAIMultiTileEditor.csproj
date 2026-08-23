@@ -13,7 +13,7 @@
     <Optimize>true</Optimize>
     <OutputPath>bin\$(Configuration)\</OutputPath>
     <EditorToolkitRoot Condition=" '$(EditorToolkitRoot)' == '' ">$(MSBuildThisFileDirectory)..\..\AdofaiEditorToolkit</EditorToolkitRoot>
-    <EditorToolkitCoreDll Condition=" '$(EditorToolkitCoreDll)' == '' ">$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit\bin\$(Configuration)\netstandard2.0\ADOFAI.EditorToolkit.dll</EditorToolkitCoreDll>
+    <EditorToolkitCoreDll Condition=" '$(EditorToolkitCoreDll)' == '' ">$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit\bin\$(Configuration)\net48\ADOFAI.EditorToolkit.dll</EditorToolkitCoreDll>
     <EditorToolkitGameDll Condition=" '$(EditorToolkitGameDll)' == '' ">$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit.ADOFAI\bin\$(Configuration)\ADOFAI.EditorToolkit.ADOFAI.dll</EditorToolkitGameDll>
   </PropertyGroup>
 
@@ -25,7 +25,6 @@
     <Reference Include="UnityModManager"><HintPath>$(UmmDir)\UnityModManager.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="ADOFAI.EditorToolkit"><HintPath>$(EditorToolkitCoreDll)</HintPath><Private>true</Private></Reference>
     <Reference Include="ADOFAI.EditorToolkit.ADOFAI"><HintPath>$(EditorToolkitGameDll)</HintPath><Private>true</Private></Reference>
-    <Reference Include="netstandard" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
   </ItemGroup>
