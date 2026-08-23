@@ -89,11 +89,28 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (ActivePaneIndex >= visible) ActivePaneIndex = visible - 1;
         }
 
-        internal void AssignToActivePane(TrackSlot track)
+        internal void AssignToActivePane(IList<TrackSlot> tracks, TrackSlot track)
         {
-            if (track == null) return;
             int pane = Math.Max(0, Math.Min(ActivePaneIndex, panes.Length - 1));
-            panes[pane].Track = track;
+            SelectTrack(tracks, pane, track);
+        }
+
+        internal void SelectTrack(IList<TrackSlot> tracks, int paneIndex, TrackSlot track)
+        {
+            if (tracks == null || track == null) return;
+            if (paneIndex < 0 || paneIndex >= panes.Length) return;
+            if (!ContainsReference(tracks, track)) return;
+
+            TrackSlot previous = panes[paneIndex].Track;
+            if (ReferenceEquals(previous, track)) return;
+
+            // A source track is shown in at most one visible group. Selecting a tab that is
+            // already visible elsewhere swaps the two group assignments instead of creating
+            // two competing views of the same mutable stock-editor snapshot.
+            int otherPane = FindVisiblePane(track, paneIndex);
+            panes[paneIndex].Track = track;
+            if (otherPane >= 0)
+                panes[otherPane].Track = previous;
         }
 
         internal int GetTrackIndex(IList<TrackSlot> tracks, int paneIndex)
@@ -112,7 +129,18 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (current < 0) current = 0;
             int next = (current + delta) % tracks.Count;
             if (next < 0) next += tracks.Count;
-            panes[paneIndex].Track = tracks[next];
+            SelectTrack(tracks, paneIndex, tracks[next]);
+        }
+
+        private int FindVisiblePane(TrackSlot track, int exceptPane)
+        {
+            int visible = VisiblePaneCount;
+            for (int i = 0; i < visible; i++)
+            {
+                if (i == exceptPane) continue;
+                if (ReferenceEquals(panes[i].Track, track)) return i;
+            }
+            return -1;
         }
 
         private static TrackSlot FindFirstUnused(IList<TrackSlot> tracks, IList<TrackSlot> used)
