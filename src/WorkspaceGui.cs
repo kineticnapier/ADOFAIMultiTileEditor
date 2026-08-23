@@ -7,6 +7,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
     internal static class WorkspaceGui
     {
         private static readonly MultiTileWorkspace workspace = new MultiTileWorkspace();
+        private static readonly Vector2[] tabScroll = new Vector2[4];
+        private static readonly Vector2[] paneScroll = new Vector2[4];
+
         private static string newTrackName = "";
         private static string status = "Store source charts, then arrange them into editor groups.";
         private static bool lastActionFailed;
@@ -123,7 +126,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 {
                     int index = store.StoreCurrent(editor, newTrackName);
                     newTrackName = "";
-                    workspaceState.AssignToActivePane(store.Tracks[index]);
+                    workspaceState.AssignToActivePane(store.Tracks, store.Tracks[index]);
                     workspaceState.EnsureAssignments(store.Tracks);
                     invalidate();
                     report("Stored " + store.Tracks[index].Name + " in editor group " + (workspaceState.ActivePaneIndex + 1) + ".");
@@ -160,63 +163,51 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             WorkspacePaneState pane = workspaceState.GetPane(paneIndex);
             TrackSlot track = pane.Track;
             int trackIndex = workspaceState.GetTrackIndex(store.Tracks, paneIndex);
-            bool active = trackIndex >= 0 && trackIndex == store.ActiveIndex && workspaceState.ActivePaneIndex == paneIndex;
+            bool focused = workspaceState.ActivePaneIndex == paneIndex;
+            bool stockActive = focused && trackIndex >= 0 && trackIndex == store.ActiveIndex;
 
             GUILayout.BeginVertical("box", GUILayout.Height(paneHeight), GUILayout.ExpandWidth(true));
 
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button(active ? "ACTIVE" : "Edit", GUILayout.Width(55f)))
-                ActivatePane(editor, store, workspaceState, paneIndex, invalidate, report, run);
+            DrawTabStrip(editor, store, workspaceState, paneIndex, focused, invalidate, report, run);
 
-            GUI.enabled = store.Tracks.Count > 1;
-            if (GUILayout.Button("<", GUILayout.Width(24f)))
-            {
-                workspaceState.CycleTrack(store.Tracks, paneIndex, -1);
-                track = workspaceState.GetPane(paneIndex).Track;
-                trackIndex = workspaceState.GetTrackIndex(store.Tracks, paneIndex);
-                if (workspaceState.ActivePaneIndex == paneIndex)
-                    ActivatePane(editor, store, workspaceState, paneIndex, invalidate, report, run);
-            }
-            GUI.enabled = true;
+            pane = workspaceState.GetPane(paneIndex);
+            track = pane.Track;
+            trackIndex = workspaceState.GetTrackIndex(store.Tracks, paneIndex);
+            stockActive = workspaceState.ActivePaneIndex == paneIndex
+                && trackIndex >= 0
+                && trackIndex == store.ActiveIndex;
 
-            if (track != null)
-            {
-                string oldName = track.Name ?? ("Track " + (trackIndex + 1));
-                string edited = GUILayout.TextField(oldName, GUILayout.MinWidth(80f));
-                if (!string.Equals(oldName, edited, StringComparison.Ordinal)) track.Name = edited;
-            }
-            else
-            {
-                GUILayout.Label("Empty editor group");
-            }
-
-            GUI.enabled = store.Tracks.Count > 1;
-            if (GUILayout.Button(">", GUILayout.Width(24f)))
-            {
-                workspaceState.CycleTrack(store.Tracks, paneIndex, 1);
-                track = workspaceState.GetPane(paneIndex).Track;
-                trackIndex = workspaceState.GetTrackIndex(store.Tracks, paneIndex);
-                if (workspaceState.ActivePaneIndex == paneIndex)
-                    ActivatePane(editor, store, workspaceState, paneIndex, invalidate, report, run);
-            }
-            GUI.enabled = true;
-
-            GUILayout.Label("G" + (paneIndex + 1), GUILayout.Width(26f));
-            GUILayout.EndHorizontal();
+            paneScroll[paneIndex] = GUILayout.BeginScrollView(
+                paneScroll[paneIndex],
+                false,
+                true,
+                GUILayout.ExpandHeight(true),
+                GUILayout.ExpandWidth(true));
 
             if (track == null || trackIndex < 0)
             {
-                GUILayout.FlexibleSpace();
-                GUILayout.Label("Store a source chart or change the editor-group layout.");
-                GUILayout.FlexibleSpace();
+                GUILayout.Space(12f);
+                GUILayout.Label("No track is assigned to this editor group.");
+                GUILayout.Label("Store a source chart, or select one of the tabs above.");
+                GUILayout.EndScrollView();
                 GUILayout.EndVertical();
                 return;
             }
 
-            active = trackIndex == store.ActiveIndex && workspaceState.ActivePaneIndex == paneIndex;
-            float previewHeight = Mathf.Max(62f, paneHeight - 142f);
+            GUILayout.BeginHorizontal();
+            string oldName = track.Name ?? ("Track " + (trackIndex + 1));
+            string edited = GUILayout.TextField(oldName, GUILayout.MinWidth(90f));
+            if (!string.Equals(oldName, edited, StringComparison.Ordinal))
+                track.Name = edited;
+
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(stockActive ? "ACTIVE IN ADOFAI" : "Edit in ADOFAI", GUILayout.Width(118f)))
+                ActivatePane(editor, store, workspaceState, paneIndex, invalidate, report, run);
+            GUILayout.EndHorizontal();
+
+            float previewHeight = Mathf.Clamp(paneHeight * 0.42f, 72f, 210f);
             Rect preview = GUILayoutUtility.GetRect(80f, previewHeight, GUILayout.ExpandWidth(true));
-            WorkspacePreviewRenderer.Draw(track, preview, active);
+            WorkspacePreviewRenderer.Draw(track, preview, stockActive);
 
             Event ev = Event.current;
             if (ev != null && ev.type == EventType.MouseDown && ev.button == 0 && preview.Contains(ev.mousePosition))
@@ -252,7 +243,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             GUI.enabled = true;
 
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Delete", GUILayout.Width(58f)))
+            if (GUILayout.Button("Delete track", GUILayout.Width(82f)))
             {
                 int target = trackIndex;
                 run(delegate
@@ -265,7 +256,62 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
             GUILayout.EndHorizontal();
 
+            GUILayout.EndScrollView();
             GUILayout.EndVertical();
+        }
+
+        private static void DrawTabStrip(
+            scnEditor editor,
+            TrackStore store,
+            MultiTileWorkspace workspaceState,
+            int paneIndex,
+            bool focused,
+            Action invalidate,
+            Action<string> report,
+            Action<Action> run)
+        {
+            GUILayout.BeginHorizontal(GUILayout.Height(42f));
+
+            if (GUILayout.Button(focused ? "> G" + (paneIndex + 1) : "G" + (paneIndex + 1), GUILayout.Width(42f)))
+            {
+                workspaceState.ActivePaneIndex = paneIndex;
+                int current = workspaceState.GetTrackIndex(store.Tracks, paneIndex);
+                if (current >= 0)
+                    ActivatePane(editor, store, workspaceState, paneIndex, invalidate, report, run);
+            }
+
+            tabScroll[paneIndex] = GUILayout.BeginScrollView(
+                tabScroll[paneIndex],
+                true,
+                false,
+                GUILayout.Height(40f),
+                GUILayout.ExpandWidth(true));
+
+            GUILayout.BeginHorizontal();
+            for (int i = 0; i < store.Tracks.Count; i++)
+            {
+                TrackSlot candidate = store.Tracks[i];
+                bool selected = ReferenceEquals(workspaceState.GetPane(paneIndex).Track, candidate);
+                bool loaded = i == store.ActiveIndex;
+                string label = ShortTrackName(candidate, i);
+                if (loaded) label = "* " + label;
+                if (selected) label = "> " + label;
+
+                float tabWidth = Mathf.Clamp(42f + label.Length * 6.5f, 76f, 150f);
+                if (GUILayout.Button(label, GUILayout.Width(tabWidth)))
+                {
+                    workspaceState.ActivePaneIndex = paneIndex;
+                    workspaceState.SelectTrack(store.Tracks, paneIndex, candidate);
+                    ActivatePane(editor, store, workspaceState, paneIndex, invalidate, report, run);
+                }
+            }
+
+            if (store.Tracks.Count == 0)
+                GUILayout.Label("No stored tracks", GUILayout.Width(110f));
+
+            GUILayout.EndHorizontal();
+            GUILayout.EndScrollView();
+            GUILayout.EndHorizontal();
         }
 
         private static void ActivatePane(
@@ -287,6 +333,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 invalidate();
                 report("Editing " + store.Tracks[target].Name + " in stock ADOFAI (group " + (paneIndex + 1) + ").");
             });
+        }
+
+        private static string ShortTrackName(TrackSlot track, int index)
+        {
+            string value = track != null && !string.IsNullOrWhiteSpace(track.Name)
+                ? track.Name.Trim()
+                : "Track " + (index + 1);
+
+            if (value.Length <= 18) return value;
+            return value.Substring(0, 17) + "...";
         }
 
         private static void DrawTrackSummary(TrackSlot track)
