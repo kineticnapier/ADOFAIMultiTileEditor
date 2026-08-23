@@ -22,6 +22,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             if (editor == null) return;
 
+            if (mountedEditor == editor && host != null)
+            {
+                host.gameObject.SetActive(true);
+                return;
+            }
+
             mountedEditor = editor;
             host = ADOFAIEditorUiHost.GetOrCreateViewportRoot(HostName);
             host.gameObject.SetActive(true);
@@ -54,13 +60,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal static void SetVisible(bool visible)
         {
             if (host != null) host.gameObject.SetActive(visible);
-        }
-
-        internal static void ForgetEditor(scnEditor editor)
-        {
-            if (mountedEditor == editor) return;
-            mountedEditor = editor;
-            host = null;
         }
 
         private static void ClearChildren(Transform parent)
