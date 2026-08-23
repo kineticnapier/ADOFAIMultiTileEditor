@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ADOFAI;
+using UnityEngine;
 
 namespace KineticNapier.ADOFAIMultiTileEditor
 {
@@ -13,6 +14,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal int CursorFloor;
         internal int RegionStartFloor;
         internal List<AngleSample> Angles = new List<AngleSample>();
+        internal List<Vector2> PreviewPositions = new List<Vector2>();
         internal string PlanetATag = "";
         internal string PlanetBTag = "";
         internal bool PivotIsA;
@@ -109,6 +111,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             var slot = new TrackSlot(name.Trim(), editor.levelData.Copy(), cursor);
             slot.Angles = GameAngleProbe.Capture(editor);
+            slot.PreviewPositions = GameAngleProbe.CapturePositions(editor);
             tracks.Add(slot);
             activeIndex = tracks.Count - 1;
             ClampFloors(slot);
@@ -122,6 +125,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             TrackSlot track = tracks[activeIndex];
             track.Data = editor.levelData.Copy();
             track.Angles = GameAngleProbe.Capture(editor);
+            track.PreviewPositions = GameAngleProbe.CapturePositions(editor);
 
             int selected = GameAngleProbe.TryGetCurrentFloorIndex(editor);
             if (selected >= 0) track.CursorFloor = selected;
@@ -152,6 +156,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             RestoreSnapshot(editor, tracks[index].Data, true);
             activeIndex = index;
             tracks[index].Angles = GameAngleProbe.Capture(editor);
+            tracks[index].PreviewPositions = GameAngleProbe.CapturePositions(editor);
             ClampFloors(tracks[index]);
             TrackSlot.ReplaceRegistration(tracks);
 
@@ -179,6 +184,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 activeIndex = Math.Min(index, tracks.Count - 1);
                 RestoreSnapshot(editor, tracks[activeIndex].Data, true);
                 tracks[activeIndex].Angles = GameAngleProbe.Capture(editor);
+                tracks[activeIndex].PreviewPositions = GameAngleProbe.CapturePositions(editor);
                 ClampFloors(tracks[activeIndex]);
             }
             TrackSlot.ReplaceRegistration(tracks);
