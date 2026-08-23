@@ -32,6 +32,9 @@
   <ItemGroup>
     <Compile Include="Main.cs" />
     <Compile Include="MultiTileOverlay.cs" />
+    <Compile Include="MultiTileWorkspace.cs" />
+    <Compile Include="WorkspaceGui.cs" />
+    <Compile Include="WorkspacePreviewRenderer.cs" />
     <Compile Include="TrackStore.cs" />
     <Compile Include="GameAngleProbe.cs" />
     <Compile Include="TrackAnalysis.cs" />
