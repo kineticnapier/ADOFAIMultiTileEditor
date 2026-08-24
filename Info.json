@@ -2,9 +2,9 @@
   "Id": "ADOFAIMultiTileEditor",
   "DisplayName": "ADOFAI Multi Tile Editor Prototype",
   "Author": "Kinetic Napier / OpenAI",
-  "Version": "0.10.12",
+  "Version": "0.10.13",
   "ManagerVersion": "0.27.14",
-  "Requirements": ["ADOFAIWorkbench-0.2.0"],
+  "Requirements": ["ADOFAIWorkbench-0.2.1"],
   "AssemblyName": "ADOFAIMultiTileEditor.dll",
   "EntryMethod": "KineticNapier.ADOFAIMultiTileEditor.Main.Load"
 }
