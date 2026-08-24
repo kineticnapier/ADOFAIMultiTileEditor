@@ -40,7 +40,8 @@ if ([string]::IsNullOrWhiteSpace($WorkbenchRoot)) {
     $WorkbenchRoot = Join-Path $parent "ADOFAIWorkbench"
 }
 $workbenchProject = Join-Path $WorkbenchRoot "src\ADOFAIWorkbench.csproj"
-if (-not (Test-Path $workbenchProject)) {
+$workbenchBuild = Join-Path $WorkbenchRoot "build.ps1"
+if (-not (Test-Path $workbenchProject) -or -not (Test-Path $workbenchBuild)) {
     throw "ADOFAIWorkbench source not found at '$WorkbenchRoot'. Clone https://github.com/kineticnapier/ADOFAIWorkbench or pass -WorkbenchRoot."
 }
 
@@ -102,15 +103,14 @@ if ($LASTEXITCODE -ne 0) { throw "EditorToolkit adapter build failed with exit c
 $toolkitGameDll = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit.ADOFAI\bin\$Configuration\ADOFAI.EditorToolkit.ADOFAI.dll"
 if (-not (Test-Path $toolkitGameDll)) { throw "EditorToolkit adapter DLL was not produced: $toolkitGameDll" }
 
-Write-Host "Restoring ADOFAIWorkbench DockPanel Suite packages..."
-& $msbuild $workbenchProject /t:Restore /p:Configuration=$Configuration /p:UmmDir="$UmmDir"
-if ($LASTEXITCODE -ne 0) { throw "ADOFAIWorkbench dependency restore failed with exit code $LASTEXITCODE" }
-
-Write-Host "Building ADOFAIWorkbench dependency..."
-& $msbuild $workbenchProject /t:Rebuild /p:Configuration=$Configuration /p:UmmDir="$UmmDir"
+Write-Host "Building ADOFAIWorkbench bridge + external host..."
+& $workbenchBuild -GameDir $GameDir -GameManagedDir $GameManagedDir -UmmDir $UmmDir -Configuration $Configuration
 if ($LASTEXITCODE -ne 0) { throw "ADOFAIWorkbench dependency build failed with exit code $LASTEXITCODE" }
 $workbenchDll = Join-Path $WorkbenchRoot "src\bin\$Configuration\ADOFAIWorkbench.dll"
-if (-not (Test-Path $workbenchDll)) { throw "ADOFAIWorkbench DLL was not produced: $workbenchDll" }
+$workbenchHost = Join-Path $WorkbenchRoot "src\Host\bin\$Configuration\ADOFAIWorkbench.Host.exe"
+foreach ($p in @($workbenchDll, $workbenchHost)) {
+    if (-not (Test-Path $p)) { throw "ADOFAIWorkbench output was not produced: $p" }
+}
 
 Write-Host "Building MultiTileEditor..."
 $project = Join-Path $PSScriptRoot "src\ADOFAIMultiTileEditor.csproj"
@@ -138,4 +138,4 @@ $zip = Join-Path $PSScriptRoot ("ADOFAIMultiTileEditor-v{0}.zip" -f $version)
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip
 Write-Host "Built: $zip"
-Write-Host "Runtime requirement: install ADOFAIWorkbench separately (Info.json Requirements enforces load order)."
+Write-Host "Runtime requirement: install ADOFAIWorkbench separately; its package includes the external DockPanel host."
