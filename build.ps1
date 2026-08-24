@@ -3,6 +3,7 @@ param(
     [string]$GameManagedDir = "",
     [string]$UmmDir = "",
     [string]$EditorToolkitRoot = "",
+    [string]$WorkbenchRoot = "",
     [string]$Configuration = "Release"
 )
 $ErrorActionPreference = "Stop"
@@ -20,8 +21,9 @@ if ([string]::IsNullOrWhiteSpace($UmmDir)) {
 }
 if ([string]::IsNullOrWhiteSpace($UmmDir)) { throw "UnityModManager.dll not found. Pass -UmmDir." }
 
+$parent = Split-Path $PSScriptRoot -Parent
+
 if ([string]::IsNullOrWhiteSpace($EditorToolkitRoot)) {
-    $parent = Split-Path $PSScriptRoot -Parent
     $toolkitCandidates = @(
         (Join-Path $parent "AdofaiEditorToolkit"),
         (Join-Path $parent "ADOFAI.EditorToolkit")
@@ -34,31 +36,35 @@ if ([string]::IsNullOrWhiteSpace($EditorToolkitRoot)) {
     throw "AdofaiEditorToolkit source not found next to this repository. Clone https://github.com/kineticnapier/AdofaiEditorToolkit or pass -EditorToolkitRoot."
 }
 
+if ([string]::IsNullOrWhiteSpace($WorkbenchRoot)) {
+    $WorkbenchRoot = Join-Path $parent "ADOFAIWorkbench"
+}
+$workbenchProject = Join-Path $WorkbenchRoot "src\ADOFAIWorkbench.csproj"
+if (-not (Test-Path $workbenchProject)) {
+    throw "ADOFAIWorkbench source not found at '$WorkbenchRoot'. Clone https://github.com/kineticnapier/ADOFAIWorkbench or pass -WorkbenchRoot."
+}
+
 $toolkitCoreProject = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit\ADOFAI.EditorToolkit.csproj"
 $toolkitGameProject = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit.ADOFAI\ADOFAI.EditorToolkit.ADOFAI.csproj"
 if (-not (Test-Path $toolkitCoreProject) -or -not (Test-Path $toolkitGameProject)) {
     throw "AdofaiEditorToolkit source is incomplete at '$EditorToolkitRoot'."
 }
 
-# MTE's Unity host uses the Toolkit's net48 target. Detect an old local Toolkit checkout
-# before dotnet emits the much less useful NETSDK1005 project.assets.json error.
 $toolkitProjectText = Get-Content $toolkitCoreProject -Raw
 if ($toolkitProjectText -notmatch '(?i)(^|[;>])net48([;<]|$)') {
     throw "Your local AdofaiEditorToolkit checkout does not contain the net48 target. Run: git -C `"$EditorToolkitRoot`" pull --ff-only"
 }
 
-# The native mount smoke test depends on the ADOFAI-specific host currently living on
-# Toolkit's feature/editor-ui-host branch. Fail early with an actionable message when
-# the neighbouring checkout is still on main/another older branch.
 $toolkitUiHost = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit.ADOFAI\ADOFAIEditorUiHost.cs"
 if (-not (Test-Path $toolkitUiHost)) {
-    throw "This MTE branch requires AdofaiEditorToolkit feature/editor-ui-host. Run: git -C `"$EditorToolkitRoot`" fetch origin feature/editor-ui-host; git -C `"$EditorToolkitRoot`" switch feature/editor-ui-host; git -C `"$EditorToolkitRoot`" pull --ff-only"
+    throw "This MTE branch requires AdofaiEditorToolkit feature/editor-ui-host or newer."
 }
 
 $required = @(
     "Assembly-CSharp.dll",
     "RDTools.dll",
     "UnityEngine.CoreModule.dll",
+    "UnityEngine.UIModule.dll",
     "UnityEngine.IMGUIModule.dll"
 ) | ForEach-Object { Join-Path $GameManagedDir $_ }
 $required += Join-Path $UmmDir "UnityModManager.dll"
@@ -77,6 +83,7 @@ if (-not $msbuild) {
 if (-not $msbuild) { throw "msbuild.exe not found. Install Visual Studio Build Tools (.NET desktop build tools)." }
 
 Write-Host "EditorToolkit: $EditorToolkitRoot"
+Write-Host "Workbench: $WorkbenchRoot"
 Write-Host "Restoring EditorToolkit targets..."
 & $dotnet restore $toolkitCoreProject --force --nologo
 if ($LASTEXITCODE -ne 0) { throw "EditorToolkit restore failed with exit code $LASTEXITCODE" }
@@ -95,9 +102,15 @@ if ($LASTEXITCODE -ne 0) { throw "EditorToolkit adapter build failed with exit c
 $toolkitGameDll = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit.ADOFAI\bin\$Configuration\ADOFAI.EditorToolkit.ADOFAI.dll"
 if (-not (Test-Path $toolkitGameDll)) { throw "EditorToolkit adapter DLL was not produced: $toolkitGameDll" }
 
+Write-Host "Building ADOFAIWorkbench dependency..."
+& $msbuild $workbenchProject /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:UmmDir="$UmmDir" /p:EditorToolkitRoot="$EditorToolkitRoot" /p:EditorToolkitCoreDll="$toolkitCoreDll" /p:EditorToolkitGameDll="$toolkitGameDll"
+if ($LASTEXITCODE -ne 0) { throw "ADOFAIWorkbench dependency build failed with exit code $LASTEXITCODE" }
+$workbenchDll = Join-Path $WorkbenchRoot "src\bin\$Configuration\ADOFAIWorkbench.dll"
+if (-not (Test-Path $workbenchDll)) { throw "ADOFAIWorkbench DLL was not produced: $workbenchDll" }
+
 Write-Host "Building MultiTileEditor..."
 $project = Join-Path $PSScriptRoot "src\ADOFAIMultiTileEditor.csproj"
-& $msbuild $project /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:UmmDir="$UmmDir" /p:EditorToolkitRoot="$EditorToolkitRoot" /p:EditorToolkitCoreDll="$toolkitCoreDll" /p:EditorToolkitGameDll="$toolkitGameDll"
+& $msbuild $project /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:UmmDir="$UmmDir" /p:EditorToolkitRoot="$EditorToolkitRoot" /p:EditorToolkitCoreDll="$toolkitCoreDll" /p:EditorToolkitGameDll="$toolkitGameDll" /p:WorkbenchRoot="$WorkbenchRoot" /p:WorkbenchDll="$workbenchDll"
 if ($LASTEXITCODE -ne 0) { throw "MultiTileEditor build failed with exit code $LASTEXITCODE" }
 
 $binDir = Join-Path $PSScriptRoot "src\bin\$Configuration"
@@ -121,3 +134,4 @@ $zip = Join-Path $PSScriptRoot ("ADOFAIMultiTileEditor-v{0}.zip" -f $version)
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip
 Write-Host "Built: $zip"
+Write-Host "Runtime requirement: install ADOFAIWorkbench separately (Info.json Requirements enforces load order)."
