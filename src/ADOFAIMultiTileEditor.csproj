@@ -36,6 +36,7 @@
     <Compile Include="ParallelEditorModel.cs" />
     <Compile Include="MultiTileParallelDocumentProvider.cs" />
     <Compile Include="NativeParallelWorkspace.cs" />
+    <Compile Include="StockEditorChromeOverride.cs" />
     <Compile Include="MultiTileWorkspace.cs" />
     <Compile Include="WorkspaceGui.cs" />
     <Compile Include="WorkspacePreviewRenderer.cs" />
