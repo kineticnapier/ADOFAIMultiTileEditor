@@ -19,7 +19,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         internal void ResetPosition()
         {
-            // Layout is owned by ADOFAIWorkbench now.
+            // External Workbench window owns its own OS-level position.
         }
 
         private void OnEnable()
@@ -41,6 +41,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
 
             WorkbenchIntegration.EnsureRegistered();
+            WorkbenchIntegration.Tick();
         }
     }
 }
