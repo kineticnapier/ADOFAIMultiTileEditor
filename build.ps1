@@ -102,8 +102,12 @@ if ($LASTEXITCODE -ne 0) { throw "EditorToolkit adapter build failed with exit c
 $toolkitGameDll = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit.ADOFAI\bin\$Configuration\ADOFAI.EditorToolkit.ADOFAI.dll"
 if (-not (Test-Path $toolkitGameDll)) { throw "EditorToolkit adapter DLL was not produced: $toolkitGameDll" }
 
+Write-Host "Restoring ADOFAIWorkbench DockPanel Suite packages..."
+& $msbuild $workbenchProject /t:Restore /p:Configuration=$Configuration /p:UmmDir="$UmmDir"
+if ($LASTEXITCODE -ne 0) { throw "ADOFAIWorkbench dependency restore failed with exit code $LASTEXITCODE" }
+
 Write-Host "Building ADOFAIWorkbench dependency..."
-& $msbuild $workbenchProject /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:UmmDir="$UmmDir" /p:EditorToolkitRoot="$EditorToolkitRoot" /p:EditorToolkitCoreDll="$toolkitCoreDll" /p:EditorToolkitGameDll="$toolkitGameDll"
+& $msbuild $workbenchProject /t:Rebuild /p:Configuration=$Configuration /p:UmmDir="$UmmDir"
 if ($LASTEXITCODE -ne 0) { throw "ADOFAIWorkbench dependency build failed with exit code $LASTEXITCODE" }
 $workbenchDll = Join-Path $WorkbenchRoot "src\bin\$Configuration\ADOFAIWorkbench.dll"
 if (-not (Test-Path $workbenchDll)) { throw "ADOFAIWorkbench DLL was not produced: $workbenchDll" }
