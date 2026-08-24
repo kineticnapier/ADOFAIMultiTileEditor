@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Windows.Forms;
 using KineticNapier.ADOFAIWorkbench;
 
 namespace KineticNapier.ADOFAIMultiTileEditor
@@ -38,23 +36,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             PublishNow(false);
         }
 
-        internal static void RunOnUnity(Action action)
-        {
-            Workbench.RunOnUnityThread(delegate
-            {
-                try
-                {
-                    if (action != null) action();
-                    PublishNow(true);
-                }
-                catch (Exception ex)
-                {
-                    UnityEngine.Debug.LogError("[ADOFAIMultiTileEditor/Workbench] " + ex);
-                }
-            });
-        }
-
-        private static void PublishNow(bool force)
+        internal static void PublishNow(bool force)
         {
             MultiTileSnapshot snapshot = CaptureSnapshot();
             if (!force && string.Equals(snapshot.Signature, lastSignature, StringComparison.Ordinal)) return;
@@ -91,7 +73,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     TrackSlot active = store.Tracks[store.ActiveIndex];
                     if (active != null)
                     {
-                        snapshot.ActiveName = active.Name ?? "Track " + (store.ActiveIndex + 1);
+                        snapshot.ActiveName = string.IsNullOrWhiteSpace(active.Name) ? "Track " + (store.ActiveIndex + 1) : active.Name;
                         snapshot.RegionStartFloor = active.RegionStartFloor;
                         snapshot.CursorFloor = active.CursorFloor;
                         snapshot.PivotIsA = active.PivotIsA;
@@ -113,7 +95,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
     {
         private readonly MultiTileTracksPane tracks = new MultiTileTracksPane();
         private readonly MultiTileSettingsPane settings = new MultiTileSettingsPane();
-        private MultiTileSnapshot latest = new MultiTileSnapshot();
 
         public IEnumerable<IDockablePane> CreatePanes()
         {
@@ -123,120 +104,39 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         internal void Publish(MultiTileSnapshot snapshot)
         {
-            latest = snapshot ?? new MultiTileSnapshot();
-            Workbench.RunOnUiThread(delegate
-            {
-                tracks.ApplySnapshot(latest);
-                settings.ApplySnapshot(latest);
-            });
+            MultiTileSnapshot value = snapshot ?? new MultiTileSnapshot();
+            tracks.ApplySnapshot(value);
+            settings.ApplySnapshot(value);
+            Workbench.PublishPane(tracks.Id);
+            Workbench.PublishPane(settings.Id);
         }
     }
 
     internal abstract class MultiTilePaneBase : IDockablePane
     {
-        protected FlowLayoutPanel Root;
         protected MultiTileSnapshot Snapshot = new MultiTileSnapshot();
 
         public abstract string Id { get; }
         public abstract string Title { get; }
         public virtual bool CanClose { get { return true; } }
-
-        public Control CreateView()
-        {
-            Root = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.TopDown,
-                WrapContents = false,
-                AutoScroll = true,
-                Padding = new Padding(12),
-                BackColor = Color.FromArgb(19, 21, 26),
-                ForeColor = Color.FromArgb(225, 228, 235)
-            };
-            Draw();
-            return Root;
-        }
-
-        public void OnOpened() { }
-        public void OnClosed() { Root = null; }
+        public abstract WorkbenchPaneView BuildView();
+        public abstract void HandleAction(string actionId, string argument);
 
         internal void ApplySnapshot(MultiTileSnapshot snapshot)
         {
             Snapshot = snapshot ?? new MultiTileSnapshot();
-            if (Root != null && !Root.IsDisposed) Draw();
         }
 
-        protected abstract void DrawContents();
-
-        protected void Draw()
+        protected void FinishAction()
         {
-            if (Root == null || Root.IsDisposed) return;
-            Root.SuspendLayout();
-            try
-            {
-                while (Root.Controls.Count > 0)
-                {
-                    Control child = Root.Controls[0];
-                    Root.Controls.RemoveAt(0);
-                    child.Dispose();
-                }
-                Root.Controls.Add(Text(Title, 16f, true));
-                Root.Controls.Add(Spacer(6));
-                DrawContents();
-            }
-            finally
-            {
-                Root.ResumeLayout(true);
-            }
+            WorkbenchIntegration.PublishNow(true);
         }
 
-        protected static Label Text(string value, float size, bool bold)
+        protected TrackSlot ActiveTrack()
         {
-            return new Label
-            {
-                Text = value ?? "",
-                AutoSize = true,
-                MaximumSize = new Size(900, 0),
-                ForeColor = Color.FromArgb(225, 228, 235),
-                Font = new Font(SystemFonts.MessageBoxFont.FontFamily, size, bold ? FontStyle.Bold : FontStyle.Regular),
-                Margin = new Padding(2, 2, 2, 4)
-            };
-        }
-
-        protected static Control Spacer(int height)
-        {
-            return new Panel { Width = 1, Height = height, Margin = new Padding(0) };
-        }
-
-        protected static Button ActionButton(string text, Action action, bool selected)
-        {
-            Button button = new Button
-            {
-                Text = text,
-                AutoSize = true,
-                MinimumSize = new Size(70, 30),
-                Margin = new Padding(2),
-                Padding = new Padding(6, 0, 6, 0),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = selected ? Color.FromArgb(70, 86, 118) : Color.FromArgb(50, 54, 64),
-                ForeColor = Color.White
-            };
-            if (action != null) button.Click += delegate { action(); };
-            return button;
-        }
-
-        protected static FlowLayoutPanel Row(params Control[] children)
-        {
-            FlowLayoutPanel panel = new FlowLayoutPanel
-            {
-                AutoSize = true,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = true,
-                Margin = new Padding(0, 2, 0, 4),
-                BackColor = Color.FromArgb(19, 21, 26)
-            };
-            for (int i = 0; i < children.Length; i++) panel.Controls.Add(children[i]);
-            return panel;
+            TrackStore store = TrackStore.Current;
+            if (store == null || store.ActiveIndex < 0 || store.ActiveIndex >= store.Tracks.Count) return null;
+            return store.Tracks[store.ActiveIndex];
         }
     }
 
@@ -245,50 +145,66 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         public override string Id { get { return "mte.tracks"; } }
         public override string Title { get { return "MTE Tracks"; } }
 
-        protected override void DrawContents()
+        public override WorkbenchPaneView BuildView()
         {
-            if (!Snapshot.EditorAvailable)
-            {
-                Root.Controls.Add(Text("Open the ADOFAI level editor first.", 10f, false));
-                return;
-            }
+            var view = new WorkbenchPaneView()
+                .Text(Title, 16f, true)
+                .Spacer(6);
 
-            Root.Controls.Add(Row(
-                ActionButton("+ Store current", delegate
-                {
-                    WorkbenchIntegration.RunOnUnity(delegate { TrackStore.Current.StoreCurrent(ADOBase.editor, ""); });
-                }, false),
-                ActionButton("Save active", delegate
-                {
-                    WorkbenchIntegration.RunOnUnity(delegate { TrackStore.Current.SaveActive(ADOBase.editor); });
-                }, false),
-                ActionButton("Start = selected", delegate
-                {
-                    WorkbenchIntegration.RunOnUnity(delegate { TrackStore.Current.SetActiveRegionStartFromSelection(ADOBase.editor); });
-                }, false)));
+            if (!Snapshot.EditorAvailable)
+                return view.Text("Open the ADOFAI level editor first.", 10f, false);
+
+            view.BeginRow()
+                .Button("+ Store current", "store", "", false)
+                .Button("Save active", "save", "", false)
+                .Button("Start = selected", "start", "", false)
+                .EndRow();
 
             if (Snapshot.Tracks.Count == 0)
-            {
-                Root.Controls.Add(Text("No tracks yet. Store the current chart to create one.", 10f, false));
-                return;
-            }
+                return view.Text("No tracks yet. Store the current chart to create one.", 10f, false);
 
             for (int i = 0; i < Snapshot.Tracks.Count; i++)
             {
                 TrackSnapshot track = Snapshot.Tracks[i];
                 bool active = track.Index == Snapshot.ActiveIndex;
-                int index = track.Index;
-                Root.Controls.Add(Row(
-                    ActionButton((active ? "> " : "") + track.Name, delegate
-                    {
-                        WorkbenchIntegration.RunOnUnity(delegate { TrackStore.Current.SwitchTo(ADOBase.editor, index); });
-                    }, active),
-                    ActionButton("×", delegate
-                    {
-                        WorkbenchIntegration.RunOnUnity(delegate { TrackStore.Current.Remove(ADOBase.editor, index); });
-                    }, false),
-                    Text("F" + track.RegionStartFloor + "   " + track.Layout, 9f, false)));
+                string index = track.Index.ToString();
+                view.BeginRow()
+                    .Button((active ? "> " : "") + track.Name, "switch", index, active)
+                    .Button("x", "remove", index, false)
+                    .Text("F" + track.RegionStartFloor + "   " + track.Layout, 9f, false)
+                    .EndRow();
             }
+            return view;
+        }
+
+        public override void HandleAction(string actionId, string argument)
+        {
+            scnEditor editor = ADOBase.editor;
+            TrackStore store = TrackStore.Current;
+            if (editor == null || store == null) return;
+
+            int index;
+            switch (actionId)
+            {
+                case "store":
+                    store.StoreCurrent(editor, "");
+                    break;
+                case "save":
+                    store.SaveActive(editor);
+                    break;
+                case "start":
+                    store.SetActiveRegionStartFromSelection(editor);
+                    break;
+                case "switch":
+                    if (int.TryParse(argument, out index)) store.SwitchTo(editor, index);
+                    break;
+                case "remove":
+                    if (int.TryParse(argument, out index)) store.Remove(editor, index);
+                    break;
+                default:
+                    return;
+            }
+            FinishAction();
         }
     }
 
@@ -297,76 +213,67 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         public override string Id { get { return "mte.settings"; } }
         public override string Title { get { return "Multi Tile"; } }
 
-        protected override void DrawContents()
+        public override WorkbenchPaneView BuildView()
         {
+            var view = new WorkbenchPaneView()
+                .Text(Title, 16f, true)
+                .Spacer(6);
+
             if (!Snapshot.EditorAvailable || Snapshot.ActiveIndex < 0)
+                return view.Text("Choose or store a source track first.", 10f, false);
+
+            view.Text(Snapshot.ActiveName + "   start F" + Snapshot.RegionStartFloor + "   cursor F" + Snapshot.CursorFloor, 10f, false)
+                .BeginRow()
+                .Text("Pivot", 10f, false)
+                .Button(Snapshot.PivotIsA ? "A" : "B", "pivot", "", true)
+                .EndRow()
+                .BeginRow()
+                .Text("Wrap", 10f, false)
+                .Button("Off", "wrap", ((int)CompactWrapMode.Off).ToString(), Snapshot.WrapMode == CompactWrapMode.Off)
+                .Button("Tiles", "wrap", ((int)CompactWrapMode.Tiles).ToString(), Snapshot.WrapMode == CompactWrapMode.Tiles)
+                .Button("Beats", "wrap", ((int)CompactWrapMode.Beats).ToString(), Snapshot.WrapMode == CompactWrapMode.Beats)
+                .EndRow()
+                .BeginRow()
+                .Text("Repeat", 10f, false)
+                .Button("-", "repeat", "-1", false)
+                .Text("x" + Snapshot.RepeatCount, 10f, true)
+                .Button("+", "repeat", "1", false)
+                .Button(Snapshot.ReuseRepeatPath ? "Reuse path: ON" : "Reuse path: OFF", "reuse", "", Snapshot.ReuseRepeatPath)
+                .EndRow()
+                .Text("Planet A tag: " + (string.IsNullOrWhiteSpace(Snapshot.PlanetATag) ? "<unset>" : Snapshot.PlanetATag), 9f, false)
+                .Text("Planet B tag: " + (string.IsNullOrWhiteSpace(Snapshot.PlanetBTag) ? "<unset>" : Snapshot.PlanetBTag), 9f, false)
+                .Spacer(8)
+                .Text("Generation controls remain in the MTE UMM panel for now.", 9f, false);
+            return view;
+        }
+
+        public override void HandleAction(string actionId, string argument)
+        {
+            TrackSlot track = ActiveTrack();
+            if (track == null) return;
+
+            int value;
+            switch (actionId)
             {
-                Root.Controls.Add(Text("Choose or store a source track first.", 10f, false));
-                return;
+                case "pivot":
+                    track.PivotIsA = !track.PivotIsA;
+                    break;
+                case "wrap":
+                    if (!int.TryParse(argument, out value)) return;
+                    track.WrapMode = (CompactWrapMode)value;
+                    break;
+                case "repeat":
+                    if (!int.TryParse(argument, out value)) return;
+                    track.RepeatCount = Math.Max(1, Math.Min(999, track.RepeatCount + value));
+                    track.RepeatCountText = track.RepeatCount.ToString();
+                    break;
+                case "reuse":
+                    track.ReuseRepeatPath = !track.ReuseRepeatPath;
+                    break;
+                default:
+                    return;
             }
-
-            Root.Controls.Add(Text(
-                Snapshot.ActiveName + "   start F" + Snapshot.RegionStartFloor + "   cursor F" + Snapshot.CursorFloor,
-                10f,
-                false));
-
-            Root.Controls.Add(Row(
-                Text("Pivot", 10f, false),
-                ActionButton(Snapshot.PivotIsA ? "A" : "B", delegate
-                {
-                    WorkbenchIntegration.RunOnUnity(delegate
-                    {
-                        TrackSlot track = TrackStore.Current.Tracks[TrackStore.Current.ActiveIndex];
-                        track.PivotIsA = !track.PivotIsA;
-                    });
-                }, true)));
-
-            Root.Controls.Add(Row(
-                Text("Wrap", 10f, false),
-                WrapButton("Off", CompactWrapMode.Off),
-                WrapButton("Tiles", CompactWrapMode.Tiles),
-                WrapButton("Beats", CompactWrapMode.Beats)));
-
-            Root.Controls.Add(Row(
-                Text("Repeat", 10f, false),
-                ActionButton("−", delegate { AdjustRepeat(-1); }, false),
-                Text("×" + Snapshot.RepeatCount, 10f, true),
-                ActionButton("+", delegate { AdjustRepeat(1); }, false),
-                ActionButton(Snapshot.ReuseRepeatPath ? "Reuse path: ON" : "Reuse path: OFF", delegate
-                {
-                    WorkbenchIntegration.RunOnUnity(delegate
-                    {
-                        TrackSlot track = TrackStore.Current.Tracks[TrackStore.Current.ActiveIndex];
-                        track.ReuseRepeatPath = !track.ReuseRepeatPath;
-                    });
-                }, Snapshot.ReuseRepeatPath)));
-
-            Root.Controls.Add(Text("Planet A tag: " + (string.IsNullOrWhiteSpace(Snapshot.PlanetATag) ? "<unset>" : Snapshot.PlanetATag), 9f, false));
-            Root.Controls.Add(Text("Planet B tag: " + (string.IsNullOrWhiteSpace(Snapshot.PlanetBTag) ? "<unset>" : Snapshot.PlanetBTag), 9f, false));
-            Root.Controls.Add(Spacer(8));
-            Root.Controls.Add(Text("Generation controls remain in the MTE UMM panel for now.", 9f, false));
-        }
-
-        private Button WrapButton(string label, CompactWrapMode mode)
-        {
-            return ActionButton(label, delegate
-            {
-                WorkbenchIntegration.RunOnUnity(delegate
-                {
-                    TrackSlot track = TrackStore.Current.Tracks[TrackStore.Current.ActiveIndex];
-                    track.WrapMode = mode;
-                });
-            }, Snapshot.WrapMode == mode);
-        }
-
-        private void AdjustRepeat(int delta)
-        {
-            WorkbenchIntegration.RunOnUnity(delegate
-            {
-                TrackSlot track = TrackStore.Current.Tracks[TrackStore.Current.ActiveIndex];
-                track.RepeatCount = Math.Max(1, Math.Min(999, track.RepeatCount + delta));
-                track.RepeatCountText = track.RepeatCount.ToString();
-            });
+            FinishAction();
         }
     }
 
