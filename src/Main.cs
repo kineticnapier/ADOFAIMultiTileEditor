@@ -7,7 +7,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 {
     public static class Main
     {
-        internal const string ModVersion = "0.10.6";
+        internal const string ModVersion = "0.10.7";
 
         private static UnityModManager.ModEntry.ModLogger logger;
         private static readonly TrackStore store = new TrackStore();
@@ -71,13 +71,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             GUILayout.Label("Multi Tile Editor v" + ModVersion);
 
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Editor overlay", GUILayout.Width(90f));
+            GUILayout.Label("Workbench panes", GUILayout.Width(100f));
             if (overlay != null)
             {
                 if (GUILayout.Button(overlay.Visible ? "Hide" : "Show", GUILayout.Width(65f)))
                     overlay.Visible = !overlay.Visible;
-                if (GUILayout.Button("Reset position", GUILayout.Width(105f)))
-                    overlay.ResetPosition();
             }
             else
             {
@@ -125,13 +123,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 return;
             }
 
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Quick editor", GUILayout.Width(75f));
-            GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Hide", GUILayout.Width(55f)) && overlay != null)
-                overlay.Visible = false;
-            GUILayout.EndHorizontal();
-
             DrawTrackTabs(editor);
             GUILayout.Space(4f);
 
@@ -146,7 +137,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             DrawGenerationControls(editor);
             GUILayout.Space(4f);
             DrawStatus();
-            GUILayout.Label("Detailed diagnostics remain available in Unity Mod Manager.");
         }
 
         private static void EnsureOverlay()
@@ -154,14 +144,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (overlay != null) return;
             try
             {
-                GameObject host = new GameObject("ADOFAIMultiTileEditorOverlay");
+                GameObject host = new GameObject("ADOFAIMultiTileEditorWorkbenchIntegration");
                 UnityEngine.Object.DontDestroyOnLoad(host);
                 overlay = host.AddComponent<MultiTileOverlay>();
                 overlay.enabled = enabled;
             }
             catch (Exception ex)
             {
-                if (logger != null) logger.Error("Could not create Multi Tile overlay: " + ex);
+                if (logger != null) logger.Error("Could not initialize Multi Tile Workbench integration: " + ex);
             }
         }
 
