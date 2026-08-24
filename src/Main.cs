@@ -7,7 +7,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 {
     public static class Main
     {
-        internal const string ModVersion = "0.10.10";
+        internal static string ModVersion { get { return typeof(Main).Assembly.GetName().Version.ToString(3); } }
 
         private static UnityModManager.ModEntry.ModLogger logger;
         private static readonly TrackStore store = new TrackStore();
