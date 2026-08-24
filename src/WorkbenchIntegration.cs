@@ -134,20 +134,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
     internal abstract class MultiTilePaneBase : IDockablePane
     {
-        protected readonly FlowLayoutPanel Root = new FlowLayoutPanel();
+        protected FlowLayoutPanel Root;
         protected MultiTileSnapshot Snapshot = new MultiTileSnapshot();
-        private bool created;
-
-        protected MultiTilePaneBase()
-        {
-            Root.Dock = DockStyle.Fill;
-            Root.FlowDirection = FlowDirection.TopDown;
-            Root.WrapContents = false;
-            Root.AutoScroll = true;
-            Root.Padding = new Padding(12);
-            Root.BackColor = Color.FromArgb(19, 21, 26);
-            Root.ForeColor = Color.FromArgb(225, 228, 235);
-        }
 
         public abstract string Id { get; }
         public abstract string Title { get; }
@@ -155,28 +143,43 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         public Control CreateView()
         {
-            created = true;
+            Root = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                AutoScroll = true,
+                Padding = new Padding(12),
+                BackColor = Color.FromArgb(19, 21, 26),
+                ForeColor = Color.FromArgb(225, 228, 235)
+            };
             Draw();
             return Root;
         }
 
-        public void OnOpened() { if (created) Draw(); }
-        public void OnClosed() { }
+        public void OnOpened() { }
+        public void OnClosed() { Root = null; }
 
         internal void ApplySnapshot(MultiTileSnapshot snapshot)
         {
             Snapshot = snapshot ?? new MultiTileSnapshot();
-            if (created && !Root.IsDisposed) Draw();
+            if (Root != null && !Root.IsDisposed) Draw();
         }
 
         protected abstract void DrawContents();
 
         protected void Draw()
         {
+            if (Root == null || Root.IsDisposed) return;
             Root.SuspendLayout();
             try
             {
-                Root.Controls.Clear();
+                while (Root.Controls.Count > 0)
+                {
+                    Control child = Root.Controls[0];
+                    Root.Controls.RemoveAt(0);
+                    child.Dispose();
+                }
                 Root.Controls.Add(Text(Title, 16f, true));
                 Root.Controls.Add(Spacer(6));
                 DrawContents();
