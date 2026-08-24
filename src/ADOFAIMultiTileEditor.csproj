@@ -15,6 +15,8 @@
     <EditorToolkitRoot Condition=" '$(EditorToolkitRoot)' == '' ">$(MSBuildThisFileDirectory)..\..\AdofaiEditorToolkit</EditorToolkitRoot>
     <EditorToolkitCoreDll Condition=" '$(EditorToolkitCoreDll)' == '' ">$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit\bin\$(Configuration)\net48\ADOFAI.EditorToolkit.dll</EditorToolkitCoreDll>
     <EditorToolkitGameDll Condition=" '$(EditorToolkitGameDll)' == '' ">$(EditorToolkitRoot)\src\ADOFAI.EditorToolkit.ADOFAI\bin\$(Configuration)\ADOFAI.EditorToolkit.ADOFAI.dll</EditorToolkitGameDll>
+    <WorkbenchRoot Condition=" '$(WorkbenchRoot)' == '' ">$(MSBuildThisFileDirectory)..\..\ADOFAIWorkbench</WorkbenchRoot>
+    <WorkbenchDll Condition=" '$(WorkbenchDll)' == '' ">$(WorkbenchRoot)\src\bin\$(Configuration)\ADOFAIWorkbench.dll</WorkbenchDll>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,6 +28,7 @@
     <Reference Include="UnityModManager"><HintPath>$(UmmDir)\UnityModManager.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="ADOFAI.EditorToolkit"><HintPath>$(EditorToolkitCoreDll)</HintPath><Private>true</Private></Reference>
     <Reference Include="ADOFAI.EditorToolkit.ADOFAI"><HintPath>$(EditorToolkitGameDll)</HintPath><Private>true</Private></Reference>
+    <Reference Include="ADOFAIWorkbench"><HintPath>$(WorkbenchDll)</HintPath><Private>false</Private></Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
   </ItemGroup>
@@ -33,10 +36,7 @@
   <ItemGroup>
     <Compile Include="Main.cs" />
     <Compile Include="MultiTileOverlay.cs" />
-    <Compile Include="ParallelEditorModel.cs" />
-    <Compile Include="MultiTileParallelDocumentProvider.cs" />
-    <Compile Include="NativeParallelWorkspace.cs" />
-    <Compile Include="StockEditorChromeOverride.cs" />
+    <Compile Include="WorkbenchIntegration.cs" />
     <Compile Include="MultiTileWorkspace.cs" />
     <Compile Include="WorkspaceGui.cs" />
     <Compile Include="WorkspacePreviewRenderer.cs" />
