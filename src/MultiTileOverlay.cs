@@ -31,6 +31,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private void OnDisable()
         {
             NativeParallelWorkspace.SetVisible(false);
+            StockEditorChromeOverride.Restore();
         }
 
         private void Update()
@@ -38,6 +39,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (!Main.OverlayCanDraw)
             {
                 NativeParallelWorkspace.SetVisible(false);
+                StockEditorChromeOverride.Restore();
                 return;
             }
 
@@ -46,12 +48,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             try
             {
+                StockEditorChromeOverride.Apply(editor);
                 NativeParallelWorkspace.Update(editor);
             }
             catch (System.Exception ex)
             {
                 nativeWorkspaceFailureEditor = editor;
                 NativeParallelWorkspace.SetVisible(false);
+                StockEditorChromeOverride.Restore();
                 Debug.LogError("[ADOFAIMultiTileEditor] Native ParallelEditor workspace failed: " + ex);
             }
         }
