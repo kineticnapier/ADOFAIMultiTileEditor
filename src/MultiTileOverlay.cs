@@ -34,12 +34,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private void Update()
         {
-            if (!Main.OverlayCanDraw || !visible)
+            if (!visible)
             {
                 WorkbenchIntegration.Unregister();
                 return;
             }
 
+            // Keep the provider registered while moving between menu/editor scenes.
+            // The pane snapshot itself reports whether an editor is available. This
+            // avoids unregister -> register -> automatic OPEN traffic exactly while
+            // ADOFAI is constructing scnEditor and changing scenes.
             WorkbenchIntegration.EnsureRegistered();
             WorkbenchIntegration.Tick();
         }
