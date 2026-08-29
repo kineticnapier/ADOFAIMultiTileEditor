@@ -15,6 +15,26 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             windowRect = DefaultRect;
         }
 
+        private void OnEnable()
+        {
+            MeasureWorkbenchBootstrap.TryRegister();
+        }
+
+        private void Update()
+        {
+            MeasureWorkbenchBootstrap.Tick(Time.unscaledDeltaTime);
+        }
+
+        private void OnDisable()
+        {
+            MeasureWorkbenchBootstrap.Unregister();
+        }
+
+        private void OnDestroy()
+        {
+            MeasureWorkbenchBootstrap.Unregister();
+        }
+
         private void OnGUI()
         {
             if (!Visible || !Main.OverlayCanDraw) return;

@@ -3,6 +3,7 @@ param(
     [string]$GameManagedDir = "",
     [string]$UmmDir = "",
     [string]$EditorToolkitRoot = "",
+    [string]$WorkbenchDir = "",
     [string]$Configuration = "Release"
 )
 $ErrorActionPreference = "Stop"
@@ -34,6 +35,20 @@ if ([string]::IsNullOrWhiteSpace($EditorToolkitRoot)) {
     throw "AdofaiEditorToolkit source not found next to this repository. Clone https://github.com/kineticnapier/AdofaiEditorToolkit or pass -EditorToolkitRoot."
 }
 
+if ([string]::IsNullOrWhiteSpace($WorkbenchDir)) {
+    $parent = Split-Path $PSScriptRoot -Parent
+    $workbenchCandidates = @(
+        (Join-Path $GameDir "Mods\ADOFAIWorkbench"),
+        (Join-Path $parent "ADOFAIWorkbench\src\bin\$Configuration")
+    )
+    $WorkbenchDir = $workbenchCandidates | Where-Object {
+        Test-Path (Join-Path $_ "ADOFAIWorkbench.dll")
+    } | Select-Object -First 1
+}
+if ([string]::IsNullOrWhiteSpace($WorkbenchDir)) {
+    throw "ADOFAIWorkbench.dll not found. Install/build ADOFAIWorkbench or pass -WorkbenchDir."
+}
+
 $toolkitCoreProject = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit\ADOFAI.EditorToolkit.csproj"
 $toolkitGameProject = Join-Path $EditorToolkitRoot "src\ADOFAI.EditorToolkit.ADOFAI\ADOFAI.EditorToolkit.ADOFAI.csproj"
 if (-not (Test-Path $toolkitCoreProject) -or -not (Test-Path $toolkitGameProject)) {
@@ -47,6 +62,7 @@ $required = @(
     "UnityEngine.IMGUIModule.dll"
 ) | ForEach-Object { Join-Path $GameManagedDir $_ }
 $required += Join-Path $UmmDir "UnityModManager.dll"
+$required += Join-Path $WorkbenchDir "ADOFAIWorkbench.dll"
 foreach ($p in $required) { if (-not (Test-Path $p)) { throw "Required reference not found: $p" } }
 
 $dotnet = (Get-Command dotnet.exe -ErrorAction SilentlyContinue).Path
@@ -62,6 +78,7 @@ if (-not $msbuild) {
 if (-not $msbuild) { throw "msbuild.exe not found. Install Visual Studio Build Tools (.NET desktop build tools)." }
 
 Write-Host "EditorToolkit: $EditorToolkitRoot"
+Write-Host "Workbench API: $WorkbenchDir"
 Write-Host "Building EditorToolkit core for .NET Framework 4.8..."
 & $dotnet build $toolkitCoreProject -c $Configuration -f net48 --nologo
 if ($LASTEXITCODE -ne 0) { throw "EditorToolkit core build failed with exit code $LASTEXITCODE" }
@@ -78,7 +95,7 @@ if (-not (Test-Path $toolkitGameDll)) { throw "EditorToolkit adapter DLL was not
 
 Write-Host "Building MultiTileEditor..."
 $project = Join-Path $PSScriptRoot "src\ADOFAIMultiTileEditor.csproj"
-& $msbuild $project /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:UmmDir="$UmmDir" /p:EditorToolkitRoot="$EditorToolkitRoot" /p:EditorToolkitCoreDll="$toolkitCoreDll" /p:EditorToolkitGameDll="$toolkitGameDll"
+& $msbuild $project /t:Rebuild /p:Configuration=$Configuration /p:GameManagedDir="$GameManagedDir" /p:UmmDir="$UmmDir" /p:EditorToolkitRoot="$EditorToolkitRoot" /p:EditorToolkitCoreDll="$toolkitCoreDll" /p:EditorToolkitGameDll="$toolkitGameDll" /p:WorkbenchDir="$WorkbenchDir"
 if ($LASTEXITCODE -ne 0) { throw "MultiTileEditor build failed with exit code $LASTEXITCODE" }
 
 $binDir = Join-Path $PSScriptRoot "src\bin\$Configuration"
