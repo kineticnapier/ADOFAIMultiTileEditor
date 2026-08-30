@@ -2,7 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Reflection;
+using R = System.Reflection;
 using ADOFAI;
 
 namespace KineticNapier.ADOFAIMultiTileEditor
@@ -216,9 +216,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             try
             {
                 Type type = value.GetType();
-                const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-                PropertyInfo first = type.GetProperty("Item1", flags);
-                PropertyInfo second = type.GetProperty("Item2", flags);
+                const R.BindingFlags flags = R.BindingFlags.Instance | R.BindingFlags.Public | R.BindingFlags.NonPublic;
+                R.PropertyInfo first = type.GetProperty("Item1", flags);
+                R.PropertyInfo second = type.GetProperty("Item2", flags);
                 if (first != null && second != null)
                 {
                     offset = Convert.ToInt32(first.GetValue(value, null), CultureInfo.InvariantCulture);
