@@ -100,6 +100,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             activeIndex = -1;
             nextAutoTagId = 1;
             TrackSlot.ReplaceRegistration(tracks);
+            ChartSessionGuard.Reset();
         }
 
         internal void DetachActive()
@@ -110,6 +111,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal int StoreCurrent(scnEditor editor, string name)
         {
             if (editor == null || editor.levelData == null) throw new InvalidOperationException("Editor is not ready.");
+            if (tracks.Count == 0) ChartSessionGuard.AcceptCurrent(editor);
+            else ChartSessionGuard.EnsureCurrent(editor);
             if (string.IsNullOrWhiteSpace(name)) name = "Track " + (tracks.Count + 1);
 
             int cursor = GameAngleProbe.TryGetCurrentFloorIndex(editor);
@@ -130,12 +133,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             activeIndex = tracks.Count - 1;
             ClampFloors(slot);
             TrackSlot.ReplaceRegistration(tracks);
+            ChartSessionGuard.AcceptCurrent(editor);
             return activeIndex;
         }
 
         internal void SaveActive(scnEditor editor)
         {
             if (activeIndex < 0 || activeIndex >= tracks.Count || editor == null || editor.levelData == null) return;
+            ChartSessionGuard.EnsureCurrent(editor);
             TrackSlot track = tracks[activeIndex];
             track.Data = editor.levelData.Copy();
             track.Angles = GameAngleProbe.Capture(editor);
@@ -145,12 +150,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (selected >= 0) track.CursorFloor = selected;
             ClampFloors(track);
             TrackSlot.ReplaceRegistration(tracks);
+            ChartSessionGuard.AcceptCurrent(editor);
         }
 
         internal void SetActiveRegionStartFromSelection(scnEditor editor)
         {
             if (activeIndex < 0 || activeIndex >= tracks.Count)
                 throw new InvalidOperationException("Switch to a source track before changing its region start.");
+            ChartSessionGuard.EnsureCurrent(editor);
             int selected = GameAngleProbe.TryGetSelectedFloorIndex(editor);
             if (selected < 0)
                 throw new InvalidOperationException("Select the floor where Multi Tile should begin first.");
@@ -164,6 +171,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             if (editor == null) throw new InvalidOperationException("Editor is not ready.");
             if (index < 0 || index >= tracks.Count) throw new ArgumentOutOfRangeException("index");
+            ChartSessionGuard.EnsureCurrent(editor);
             if (index == activeIndex) return;
 
             SaveActive(editor);
@@ -182,6 +190,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal void Remove(scnEditor editor, int index)
         {
             if (index < 0 || index >= tracks.Count) return;
+            if (tracks.Count > 0) ChartSessionGuard.EnsureCurrent(editor);
             bool removingActive = index == activeIndex;
             tracks.RemoveAt(index);
 
@@ -189,6 +198,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 activeIndex = -1;
                 TrackSlot.ReplaceRegistration(tracks);
+                ChartSessionGuard.AcceptCurrent(editor);
                 return;
             }
 
@@ -202,14 +212,17 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 ClampFloors(tracks[activeIndex]);
             }
             TrackSlot.ReplaceRegistration(tracks);
+            ChartSessionGuard.AcceptCurrent(editor);
         }
 
         internal static void RestoreSnapshot(scnEditor editor, LevelData snapshot, bool updateDecorations)
         {
             if (editor == null) throw new InvalidOperationException("Editor is not ready.");
             if (snapshot == null) throw new InvalidOperationException("Track snapshot is empty.");
+            ChartSessionGuard.EnsureCurrent(editor);
 
             editor.customLevel.levelData = snapshot.Copy();
+            ChartSessionGuard.AcceptCurrent(editor);
             editor.DeselectFloors(false);
             editor.RemakePath(true, true);
             if (updateDecorations)
@@ -217,6 +230,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 editor.DeselectAllDecorations();
                 editor.UpdateDecorationObjects();
             }
+            ChartSessionGuard.AcceptCurrent(editor);
         }
 
         private static void ClampFloors(TrackSlot track)
