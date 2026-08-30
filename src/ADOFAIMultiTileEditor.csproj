@@ -37,6 +37,7 @@
 
   <ItemGroup>
     <Compile Include="Main.cs" />
+    <Compile Include="MteLocalization.cs" />
     <Compile Include="MultiTileOverlay.cs" />
     <Compile Include="WorkbenchIntegration.cs" />
     <Compile Include="MultiTileWorkspace.cs" />
