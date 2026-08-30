@@ -43,16 +43,21 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (!enabled) return;
 
             scnEditor editor = ADOBase.editor;
-            if (editor == lastEditor) return;
+            bool editorChanged = editor != lastEditor;
+            bool chartChangedInPlace = !editorChanged && editor != null && ChartSessionGuard.HasExternalChange(editor);
 
-            if (lastEditor != null && editor != lastEditor)
+            if (lastEditor != null && (editorChanged || chartChangedInPlace))
             {
                 store.Reset();
-                WorkbenchIntegration.ResetGenerationState("Editor instance changed; track queue was cleared.");
+                string message = chartChangedInPlace
+                    ? "Open chart changed; stale MTE tracks were cleared to prevent restoring another chart's snapshot."
+                    : "Editor instance changed; track queue was cleared.";
+                WorkbenchIntegration.ResetGenerationState(message);
                 WorkbenchIntegration.PublishNow(true);
             }
 
             lastEditor = editor;
+            if (editor != null) ChartSessionGuard.AcceptCurrent(editor);
         }
 
         private static void EnsureOverlay()
