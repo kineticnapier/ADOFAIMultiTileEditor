@@ -59,6 +59,7 @@
     <Compile Include="TileDecorationResult.cs" />
     <Compile Include="FixedTileDecorationGenerator.cs" />
     <Compile Include="TilePreviewPostProcessor.cs" />
+    <Compile Include="SourceEventTransfer.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
 
