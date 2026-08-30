@@ -38,6 +38,7 @@
   <ItemGroup>
     <Compile Include="Main.cs" />
     <Compile Include="MteLocalization.cs" />
+    <Compile Include="ChartSessionGuard.cs" />
     <Compile Include="MultiTileOverlay.cs" />
     <Compile Include="WorkbenchIntegration.cs" />
     <Compile Include="MultiTileWorkspace.cs" />
