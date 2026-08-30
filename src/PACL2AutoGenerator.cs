@@ -41,6 +41,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     editor, plan, preview, tracks, baseTrackIndex);
 
                 SourceEventTransferResult eventResult = SourceEventTransfer.ApplyAndCommit(editor, tracks, plan);
+                string terminalPauseResult = TerminalPauseEmitter.Apply(editor.levelData, plan);
 
                 editor.ApplyEventsToFloors();
                 editor.UpdateDecorationObjects();
@@ -49,7 +50,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     + " planet decoration(s)"
                     + (createdOrbitTemplate ? " and an internal Orbit template" : "")
                     + "; generated event properties were typed by ADOFAI.EditorToolkit metadata conversion. "
-                    + eventResult.Diagnostic;
+                    + eventResult.Diagnostic + " " + terminalPauseResult;
 
                 success = true;
                 return result;
