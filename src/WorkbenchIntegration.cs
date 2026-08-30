@@ -144,9 +144,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static void BuildAdvancedLines(MultiTileSnapshot snapshot)
         {
             snapshot.AdvancedLines.Add("Editor binding: " + (snapshot.ActiveIndex >= 0 ? "source track #" + (snapshot.ActiveIndex + 1) : "detached output/base"));
-            snapshot.AdvancedLines.Add("Each planet group has its own Off/Tiles/Beats layout length and virtual-repeat settings. Position Track and layout jumps use instant rigid planet teleports.");
+            snapshot.AdvancedLines.Add("Each planet group has its own Off/Tiles/Beats layout length and virtual-repeat settings. PositionTrack position and layout jumps use instant rigid planet teleports.");
             snapshot.AdvancedLines.Add("Virtual repeat expands timing/orbits from one stored source cycle; between cycles the group returns to that cycle's first tile and reuses the same Floor preview.");
-            snapshot.AdvancedLines.Add("Pause / Hold / FreeRoam / MultiPlanet remain unsupported.");
+            snapshot.AdvancedLines.Add(SourceEventTransfer.GetCompatibilitySummary());
 
             if (lastPlan != null)
             {
@@ -169,12 +169,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     for (int s = 0; s < shown; s++)
                     {
                         TrackSegment seg = track.Segments[s];
+                        string pause = seg.PauseDurationBeats > TimelineMerger.BeatEpsilon
+                            ? "  pause=" + seg.PauseDurationBeats.ToString("0.######", CultureInfo.InvariantCulture)
+                                + " + motion=" + seg.MotionDurationBeats.ToString("0.######", CultureInfo.InvariantCulture)
+                            : "";
                         snapshot.AdvancedLines.Add("  #" + s + " F" + seg.SourceFloor
                             + "  " + (seg.StartBeat - lastPlan.StartBeat).ToString("0.######", CultureInfo.InvariantCulture)
                             + " -> " + (seg.EndBeat - lastPlan.StartBeat).ToString("0.######", CultureInfo.InvariantCulture)
                             + "  dur=" + seg.DurationBeats.ToString("0.######", CultureInfo.InvariantCulture) + " beat / "
-                            + seg.DurationSeconds.ToString("0.######", CultureInfo.InvariantCulture) + " sec  "
-                            + seg.MovingTag + " around " + seg.CenterTag
+                            + seg.DurationSeconds.ToString("0.######", CultureInfo.InvariantCulture) + " sec"
+                            + pause + "  " + seg.MovingTag + " around " + seg.CenterTag
                             + "  amount=" + seg.AmountDegrees.ToString("0.###", CultureInfo.InvariantCulture) + "°"
                             + "  @M" + seg.MasterAnchorIndex);
                     }
