@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ADOFAI;
+using UnityEngine;
 
 namespace KineticNapier.ADOFAIMultiTileEditor
 {
@@ -13,18 +14,17 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal int CursorFloor;
         internal int RegionStartFloor;
         internal List<AngleSample> Angles = new List<AngleSample>();
+        internal List<Vector2> PreviewPositions = new List<Vector2>();
         internal string PlanetATag = "";
         internal string PlanetBTag = "";
         internal bool PivotIsA;
 
-        // Visual-layout / virtual-repeat settings belong to each planet group.
         internal CompactWrapMode WrapMode = CompactWrapMode.Tiles;
         internal int WrapEveryTiles = 32;
         internal double WrapEveryBeats = 16.0;
         internal int RepeatCount = 1;
         internal bool ReuseRepeatPath;
 
-        // Keep in-progress text per group so switching tabs does not destroy edits.
         internal string WrapTilesText = "32";
         internal string WrapBeatsText = "16";
         internal string RepeatCountText = "1";
@@ -36,7 +36,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             CursorFloor = cursorFloor;
             RegionStartFloor = cursorFloor;
             PivotIsA = false;
-            // Virtual repetition is harmless at x1 and makes entering xN enough to use it.
             ReuseRepeatPath = true;
         }
 
@@ -81,9 +80,17 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
     internal sealed class TrackStore
     {
+        private static TrackStore current;
         private readonly List<TrackSlot> tracks = new List<TrackSlot>();
         private int activeIndex = -1;
+        private int nextAutoTagId = 1;
 
+        internal TrackStore()
+        {
+            current = this;
+        }
+
+        internal static TrackStore Current { get { return current; } }
         internal IList<TrackSlot> Tracks { get { return tracks; } }
         internal int ActiveIndex { get { return activeIndex; } }
 
@@ -91,7 +98,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             tracks.Clear();
             activeIndex = -1;
+            nextAutoTagId = 1;
             TrackSlot.ReplaceRegistration(tracks);
+            ChartSessionGuard.Reset();
         }
 
         internal void DetachActive()
@@ -102,37 +111,53 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal int StoreCurrent(scnEditor editor, string name)
         {
             if (editor == null || editor.levelData == null) throw new InvalidOperationException("Editor is not ready.");
+            if (tracks.Count == 0) ChartSessionGuard.AcceptCurrent(editor);
+            else ChartSessionGuard.EnsureCurrent(editor);
             if (string.IsNullOrWhiteSpace(name)) name = "Track " + (tracks.Count + 1);
 
             int cursor = GameAngleProbe.TryGetCurrentFloorIndex(editor);
             if (cursor < 0) cursor = Math.Max(0, editor.floors.Count - 1);
 
-            var slot = new TrackSlot(name.Trim(), editor.levelData.Copy(), cursor);
+            int tagId = nextAutoTagId++;
+            var slot = new TrackSlot(name.Trim(), editor.levelData.Copy(), cursor)
+            {
+                PlanetATag = "MTE_P" + tagId + "_A",
+                PlanetBTag = "MTE_P" + tagId + "_B"
+            };
+            if (tracks.Count > 0)
+                slot.RegionStartFloor = tracks[0].RegionStartFloor;
+
             slot.Angles = GameAngleProbe.Capture(editor);
+            slot.PreviewPositions = GameAngleProbe.CapturePositions(editor);
             tracks.Add(slot);
             activeIndex = tracks.Count - 1;
             ClampFloors(slot);
             TrackSlot.ReplaceRegistration(tracks);
+            ChartSessionGuard.AcceptCurrent(editor);
             return activeIndex;
         }
 
         internal void SaveActive(scnEditor editor)
         {
             if (activeIndex < 0 || activeIndex >= tracks.Count || editor == null || editor.levelData == null) return;
+            ChartSessionGuard.EnsureCurrent(editor);
             TrackSlot track = tracks[activeIndex];
             track.Data = editor.levelData.Copy();
             track.Angles = GameAngleProbe.Capture(editor);
+            track.PreviewPositions = GameAngleProbe.CapturePositions(editor);
 
             int selected = GameAngleProbe.TryGetCurrentFloorIndex(editor);
             if (selected >= 0) track.CursorFloor = selected;
             ClampFloors(track);
             TrackSlot.ReplaceRegistration(tracks);
+            ChartSessionGuard.AcceptCurrent(editor);
         }
 
         internal void SetActiveRegionStartFromSelection(scnEditor editor)
         {
             if (activeIndex < 0 || activeIndex >= tracks.Count)
                 throw new InvalidOperationException("Switch to a source track before changing its region start.");
+            ChartSessionGuard.EnsureCurrent(editor);
             int selected = GameAngleProbe.TryGetSelectedFloorIndex(editor);
             if (selected < 0)
                 throw new InvalidOperationException("Select the floor where Multi Tile should begin first.");
@@ -146,12 +171,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             if (editor == null) throw new InvalidOperationException("Editor is not ready.");
             if (index < 0 || index >= tracks.Count) throw new ArgumentOutOfRangeException("index");
+            ChartSessionGuard.EnsureCurrent(editor);
             if (index == activeIndex) return;
 
             SaveActive(editor);
             RestoreSnapshot(editor, tracks[index].Data, true);
             activeIndex = index;
             tracks[index].Angles = GameAngleProbe.Capture(editor);
+            tracks[index].PreviewPositions = GameAngleProbe.CapturePositions(editor);
             ClampFloors(tracks[index]);
             TrackSlot.ReplaceRegistration(tracks);
 
@@ -163,6 +190,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal void Remove(scnEditor editor, int index)
         {
             if (index < 0 || index >= tracks.Count) return;
+            if (tracks.Count > 0) ChartSessionGuard.EnsureCurrent(editor);
             bool removingActive = index == activeIndex;
             tracks.RemoveAt(index);
 
@@ -170,6 +198,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 activeIndex = -1;
                 TrackSlot.ReplaceRegistration(tracks);
+                ChartSessionGuard.AcceptCurrent(editor);
                 return;
             }
 
@@ -179,17 +208,21 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 activeIndex = Math.Min(index, tracks.Count - 1);
                 RestoreSnapshot(editor, tracks[activeIndex].Data, true);
                 tracks[activeIndex].Angles = GameAngleProbe.Capture(editor);
+                tracks[activeIndex].PreviewPositions = GameAngleProbe.CapturePositions(editor);
                 ClampFloors(tracks[activeIndex]);
             }
             TrackSlot.ReplaceRegistration(tracks);
+            ChartSessionGuard.AcceptCurrent(editor);
         }
 
         internal static void RestoreSnapshot(scnEditor editor, LevelData snapshot, bool updateDecorations)
         {
             if (editor == null) throw new InvalidOperationException("Editor is not ready.");
             if (snapshot == null) throw new InvalidOperationException("Track snapshot is empty.");
+            ChartSessionGuard.EnsureCurrent(editor);
 
             editor.customLevel.levelData = snapshot.Copy();
+            ChartSessionGuard.AcceptCurrent(editor);
             editor.DeselectFloors(false);
             editor.RemakePath(true, true);
             if (updateDecorations)
@@ -197,6 +230,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 editor.DeselectAllDecorations();
                 editor.UpdateDecorationObjects();
             }
+            ChartSessionGuard.AcceptCurrent(editor);
         }
 
         private static void ClampFloors(TrackSlot track)

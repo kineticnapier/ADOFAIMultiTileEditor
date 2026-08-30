@@ -14,13 +14,20 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal string TrackName;
         internal int SourceFloor;
 
+        // Start/End/Duration describe the complete hit-to-hit interval on the
+        // merged master timeline. PauseDuration is the stationary part at the
+        // landed source floor; MotionDuration is the actual orbit travel.
         internal double StartBeat;
         internal double EndBeat;
         internal double DurationBeats;
+        internal double PauseDurationBeats;
+        internal double MotionDurationBeats;
 
         internal double StartSeconds;
         internal double EndSeconds;
         internal double DurationSeconds;
+        internal double PauseSeconds;
+        internal double MotionDurationSeconds;
         internal double SourceDurationBeats;
         internal double EffectiveBpm;
 
@@ -52,6 +59,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal double EndBeat;
         internal double StartSeconds;
         internal double EndSeconds;
+
+        // Pause on the final landable floor has no following hit-to-hit segment,
+        // so it cannot live on TrackSegment.Pause*. Keep it separately so virtual
+        // repeat and per-track lifetime preserve the stationary wait without
+        // inventing an extra orbit or swapping planet roles.
+        internal int TerminalFloor = -1;
+        internal double TerminalPauseSeconds;
+        internal double TerminalPauseBeats;
 
         internal readonly List<TrackSegment> Segments = new List<TrackSegment>();
         internal readonly List<SourceFloorPoint> SourceFloors = new List<SourceFloorPoint>();
