@@ -58,7 +58,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             plan.Diagnostic = plan.Diagnostic.TrimEnd('.')
                 + "; region starts at F" + plan.RegionStartFloor
                 + "; constant master BPM " + masterBpm.ToString("0.######", CultureInfo.InvariantCulture)
-                + " (source SetSpeed maps baked into region-relative real time; Pause is retained as stationary delay before each orbit).";
+                + " (source SetSpeed maps baked into region-relative real time; Pause is retained as stationary delay before each orbit, including terminal-floor wait time).";
             return plan;
         }
 
@@ -239,7 +239,23 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 pivotIsA = !pivotIsA;
             }
 
-            result.EndSeconds = cursorSeconds;
+            // Pause belongs to the landed floor. Every non-terminal floor is handled
+            // above as the stationary prefix of its following segment. The final
+            // landable floor has no following segment, so older builds never read its
+            // extraBeats at all. Preserve it as a terminal stationary interval.
+            object terminalFloor = floors[floors.Count - 1];
+            double terminalPauseSourceBeats = Math.Max(0.0, ReadDouble(terminalFloor, "extraBeats", 0.0));
+            result.TerminalFloor = ReadFloorId(terminalFloor, floors.Count - 1);
+            if (terminalPauseSourceBeats > TimelineMerger.BeatEpsilon)
+            {
+                double terminalSpeed = ReadDouble(terminalFloor, "speed", 1.0);
+                double terminalBpm = baseBpm * terminalSpeed;
+                if (!(terminalBpm > MinBpm) || double.IsNaN(terminalBpm) || double.IsInfinity(terminalBpm))
+                    throw new InvalidOperationException("Track '" + slot.Name + "' has an invalid effective BPM on terminal floor " + result.TerminalFloor + ".");
+                result.TerminalPauseSeconds = terminalPauseSourceBeats * 60.0 / terminalBpm;
+            }
+
+            result.EndSeconds = cursorSeconds + result.TerminalPauseSeconds;
             return result;
         }
 
@@ -264,6 +280,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 AnalyzedTrack track = tracks[t];
                 track.StartBeat = track.StartSeconds * masterBpm / 60.0;
                 track.EndBeat = track.EndSeconds * masterBpm / 60.0;
+                track.TerminalPauseBeats = track.TerminalPauseSeconds * masterBpm / 60.0;
                 for (int s = 0; s < track.Segments.Count; s++)
                 {
                     TrackSegment segment = track.Segments[s];
