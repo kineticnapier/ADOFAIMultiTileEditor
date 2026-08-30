@@ -14,13 +14,20 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal string TrackName;
         internal int SourceFloor;
 
+        // Start/End/Duration describe the complete hit-to-hit interval on the
+        // merged master timeline. PauseDuration is the stationary part at the
+        // landed source floor; MotionDuration is the actual orbit travel.
         internal double StartBeat;
         internal double EndBeat;
         internal double DurationBeats;
+        internal double PauseDurationBeats;
+        internal double MotionDurationBeats;
 
         internal double StartSeconds;
         internal double EndSeconds;
         internal double DurationSeconds;
+        internal double PauseSeconds;
+        internal double MotionDurationSeconds;
         internal double SourceDurationBeats;
         internal double EffectiveBpm;
 
