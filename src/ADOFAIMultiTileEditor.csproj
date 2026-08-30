@@ -57,6 +57,7 @@
     <Compile Include="EditorToolkitBridge.cs" />
     <Compile Include="OrbitEmitter.cs" />
     <Compile Include="PACL2AutoGenerator.cs" />
+    <Compile Include="TerminalPauseEmitter.cs" />
     <Compile Include="MasterOutputGenerator.cs" />
     <Compile Include="TileDecorationResult.cs" />
     <Compile Include="FixedTileDecorationGenerator.cs" />
