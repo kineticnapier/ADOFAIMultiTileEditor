@@ -24,6 +24,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             logger = entry.Logger;
             entry.OnToggle = OnToggle;
             entry.OnUpdate = OnUpdate;
+            MteLocalization.Initialize();
             EnsureOverlay();
             logger.Log("ADOFAI Multi Tile Editor v" + ModVersion + " loaded. UI is hosted in ADOFAI Workbench.");
             return true;
