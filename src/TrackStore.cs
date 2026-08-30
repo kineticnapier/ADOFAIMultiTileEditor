@@ -19,14 +19,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal string PlanetBTag = "";
         internal bool PivotIsA;
 
-        // Visual-layout / virtual-repeat settings belong to each planet group.
         internal CompactWrapMode WrapMode = CompactWrapMode.Tiles;
         internal int WrapEveryTiles = 32;
         internal double WrapEveryBeats = 16.0;
         internal int RepeatCount = 1;
         internal bool ReuseRepeatPath;
 
-        // Keep in-progress text per group so switching tabs does not destroy edits.
         internal string WrapTilesText = "32";
         internal string WrapBeatsText = "16";
         internal string RepeatCountText = "1";
@@ -38,7 +36,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             CursorFloor = cursorFloor;
             RegionStartFloor = cursorFloor;
             PivotIsA = false;
-            // Virtual repetition is harmless at x1 and makes entering xN enough to use it.
             ReuseRepeatPath = true;
         }
 
@@ -124,6 +121,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 PlanetATag = "MTE_P" + tagId + "_A",
                 PlanetBTag = "MTE_P" + tagId + "_B"
             };
+            if (tracks.Count > 0)
+                slot.RegionStartFloor = tracks[0].RegionStartFloor;
+
             slot.Angles = GameAngleProbe.Capture(editor);
             slot.PreviewPositions = GameAngleProbe.CapturePositions(editor);
             tracks.Add(slot);
