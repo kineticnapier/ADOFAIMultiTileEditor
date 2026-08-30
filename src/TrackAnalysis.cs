@@ -60,6 +60,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal double StartSeconds;
         internal double EndSeconds;
 
+        // Pause on the final landable floor has no following hit-to-hit segment,
+        // so it cannot live on TrackSegment.Pause*. Keep it separately so virtual
+        // repeat and per-track lifetime preserve the stationary wait without
+        // inventing an extra orbit or swapping planet roles.
+        internal int TerminalFloor = -1;
+        internal double TerminalPauseSeconds;
+        internal double TerminalPauseBeats;
+
         internal readonly List<TrackSegment> Segments = new List<TrackSegment>();
         internal readonly List<SourceFloorPoint> SourceFloors = new List<SourceFloorPoint>();
     }
