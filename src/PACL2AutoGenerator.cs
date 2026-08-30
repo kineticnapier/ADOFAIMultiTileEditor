@@ -40,13 +40,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 OrbitCommitResult result = OrbitEmitter.GenerateAndCommit(
                     editor, plan, preview, tracks, baseTrackIndex);
 
+                SourceEventTransferResult eventResult = SourceEventTransfer.ApplyAndCommit(editor, tracks, plan);
+
                 editor.ApplyEventsToFloors();
                 editor.UpdateDecorationObjects();
 
                 result.Diagnostic += " Auto setup at F" + plan.RegionStartFloor + " created " + createdPlanets
                     + " planet decoration(s)"
                     + (createdOrbitTemplate ? " and an internal Orbit template" : "")
-                    + "; generated event properties were typed by ADOFAI.EditorToolkit metadata conversion.";
+                    + "; generated event properties were typed by ADOFAI.EditorToolkit metadata conversion. "
+                    + eventResult.Diagnostic;
 
                 success = true;
                 return result;
@@ -159,16 +162,19 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 throw new InvalidOperationException("The analyzed plan has no segment available for an Orbit template.");
 
             TrackSegment segment = plan.Tracks[0].Segments[0];
+            double motionDuration = segment.MotionDurationBeats > TimelineMerger.BeatEpsilon
+                ? segment.MotionDurationBeats
+                : segment.DurationBeats;
             EditorToolkitBridge.EventsFor(levelData)
                 .Create("OrbitDecoration", plan.RegionStartFloor, EventCollection.Actions)
-                .Set("duration", segment.DurationBeats)
+                .Set("duration", motionDuration)
                 .Set("tag", segment.MovingTag)
                 .Set("centerTag", segment.CenterTag)
                 .Set("amount", segment.AmountDegrees)
                 .Set("lockRotation", false)
                 .Set("dstRadiusMultiplier", 1.0)
                 .Set("ease", "Linear")
-                .Set("angleOffset", 0.0)
+                .Set("angleOffset", Math.Max(0.0, segment.PauseDurationBeats) * 180.0)
                 .Set("eventTag", "");
             return true;
         }
