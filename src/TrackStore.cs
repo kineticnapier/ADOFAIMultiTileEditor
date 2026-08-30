@@ -86,6 +86,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static TrackStore current;
         private readonly List<TrackSlot> tracks = new List<TrackSlot>();
         private int activeIndex = -1;
+        private int nextAutoTagId = 1;
 
         internal TrackStore()
         {
@@ -100,6 +101,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             tracks.Clear();
             activeIndex = -1;
+            nextAutoTagId = 1;
             TrackSlot.ReplaceRegistration(tracks);
         }
 
@@ -116,7 +118,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             int cursor = GameAngleProbe.TryGetCurrentFloorIndex(editor);
             if (cursor < 0) cursor = Math.Max(0, editor.floors.Count - 1);
 
-            var slot = new TrackSlot(name.Trim(), editor.levelData.Copy(), cursor);
+            int tagId = nextAutoTagId++;
+            var slot = new TrackSlot(name.Trim(), editor.levelData.Copy(), cursor)
+            {
+                PlanetATag = "MTE_P" + tagId + "_A",
+                PlanetBTag = "MTE_P" + tagId + "_B"
+            };
             slot.Angles = GameAngleProbe.Capture(editor);
             slot.PreviewPositions = GameAngleProbe.CapturePositions(editor);
             tracks.Add(slot);
