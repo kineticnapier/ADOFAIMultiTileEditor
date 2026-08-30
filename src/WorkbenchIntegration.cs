@@ -15,7 +15,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static string newTrackName = "";
         private static GenerationPlan lastPlan;
         private static MasterPathPreview lastPathPreview;
-        private static string status = "Select the floor where Multi Tile should begin, then store each source chart as a track.";
+        private static string status = "";
         private static bool lastActionFailed;
         private static bool showAdvanced;
 
@@ -44,6 +44,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             PublishNow(false);
         }
 
+        internal static void RefreshLanguage()
+        {
+            lastSignature = null;
+            if (registered) PublishNow(true);
+        }
+
         internal static void ResetGenerationState(string message)
         {
             lastPlan = null;
@@ -69,7 +75,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             snapshot.EditorAvailable = editor != null;
             snapshot.ActiveIndex = store != null ? store.ActiveIndex : -1;
             snapshot.NewTrackName = newTrackName ?? "";
-            snapshot.Status = status ?? "";
+            snapshot.Status = string.IsNullOrWhiteSpace(status)
+                ? MteLocalization.T("initialStatus", "Select the floor where Multi Tile should begin, then store each source chart as a track.")
+                : status;
             snapshot.LastActionFailed = lastActionFailed;
             snapshot.ShowAdvanced = showAdvanced;
 
@@ -113,15 +121,19 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         snapshot.PlanetATag = active.PlanetATag ?? "";
                         snapshot.PlanetBTag = active.PlanetBTag ?? "";
                         AngleSample angle = active.CurrentAngle;
-                        snapshot.AngleText = angle.Valid ? angle.Degrees.ToString("0.###", CultureInfo.InvariantCulture) + "°" : "angle ?";
-                        snapshot.AngleCountText = active.Data != null && active.Data.angleData != null ? active.Data.angleData.Count + " angles" : "empty";
+                        snapshot.AngleText = angle.Valid
+                            ? angle.Degrees.ToString("0.###", CultureInfo.InvariantCulture) + "°"
+                            : MteLocalization.T("angleUnknown", "angle ?");
+                        snapshot.AngleCountText = active.Data != null && active.Data.angleData != null
+                            ? MteLocalization.F("angles", "{0} angles", active.Data.angleData.Count)
+                            : MteLocalization.T("empty", "empty");
                     }
                 }
             }
 
-            if (lastPlan == null) snapshot.GenerationState = "Not analyzed";
-            else if (lastPathPreview == null) snapshot.GenerationState = "Analyzed";
-            else snapshot.GenerationState = "Ready";
+            if (lastPlan == null) snapshot.GenerationState = MteLocalization.T("state.notAnalyzed", "Not analyzed");
+            else if (lastPathPreview == null) snapshot.GenerationState = MteLocalization.T("state.analyzed", "Analyzed");
+            else snapshot.GenerationState = MteLocalization.T("state.ready", "Ready");
 
             snapshot.CanAnalyze = snapshot.EditorAvailable && snapshot.ActiveIndex >= 0 && snapshot.Tracks.Count > 0;
             snapshot.CanGenerate = lastPlan != null && lastPathPreview != null;
@@ -129,11 +141,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             if (lastPlan != null)
             {
-                snapshot.PlanSummary = "Start F" + lastPlan.RegionStartFloor
-                    + "   Tracks " + lastPlan.Tracks.Count
-                    + "   Duration " + (lastPlan.EndSeconds - lastPlan.StartSeconds).ToString("0.###", CultureInfo.InvariantCulture) + " sec"
-                    + "   Master " + lastPlan.MasterBpm.ToString("0.###", CultureInfo.InvariantCulture) + " BPM"
-                    + "   Layout/repeat per group";
+                snapshot.PlanSummary = MteLocalization.F(
+                    "planSummary",
+                    "Start F{0}   Tracks {1}   Duration {2} sec   Master {3} BPM   Layout/repeat per group",
+                    lastPlan.RegionStartFloor,
+                    lastPlan.Tracks.Count,
+                    (lastPlan.EndSeconds - lastPlan.StartSeconds).ToString("0.###", CultureInfo.InvariantCulture),
+                    lastPlan.MasterBpm.ToString("0.###", CultureInfo.InvariantCulture));
             }
 
             if (showAdvanced) BuildAdvancedLines(snapshot);
@@ -442,22 +456,23 @@ namespace KineticNapier.ADOFAIMultiTileEditor
     internal sealed class MultiTileTracksPane : MultiTilePaneBase
     {
         public override string Id { get { return "mte.tracks"; } }
-        public override string Title { get { return "MTE Tracks"; } }
+        public override string Title { get { return MteLocalization.T("tracks.title", "MTE Tracks"); } }
 
         public override WorkbenchPaneView BuildView()
         {
-            var view = new WorkbenchPaneView().Text("MTE Tracks", 16f, true).Spacer(6);
-            if (!Snapshot.EditorAvailable) return view.Text("Open the ADOFAI level editor first.", 10f, false);
+            var view = new WorkbenchPaneView().Text(MteLocalization.T("tracks.heading", "MTE Tracks"), 16f, true).Spacer(6);
+            if (!Snapshot.EditorAvailable)
+                return view.Text(MteLocalization.T("editor.open", "Open the ADOFAI level editor first."), 10f, false);
 
             view.BeginRow()
-                .Text("New track", 10f, false)
+                .Text(MteLocalization.T("tracks.new", "New track"), 10f, false)
                 .Input(Snapshot.NewTrackName, "new-name")
-                .Button("+ Store current", "store", "", false, true)
+                .Button(MteLocalization.T("tracks.store", "+ Store current"), "store", "", false, true)
                 .EndRow()
                 .Spacer(5);
 
             if (Snapshot.Tracks.Count == 0)
-                return view.Text("No tracks yet. Select the Multi Tile start floor, then store the current chart.", 10f, false);
+                return view.Text(MteLocalization.T("tracks.empty", "No tracks yet. Select the Multi Tile start floor, then store the current chart."), 10f, false);
 
             for (int i = 0; i < Snapshot.Tracks.Count; i++)
             {
@@ -466,8 +481,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 string index = track.Index.ToString(CultureInfo.InvariantCulture);
                 view.BeginRow()
                     .Button((active ? "> " : "") + track.Name, "switch", index, active, !active)
-                    .Button("Delete", "remove", index, false, true)
-                    .Text("Start F" + track.RegionStartFloor + "   Cursor F" + track.CursorFloor + "   " + track.Layout, 9f, false)
+                    .Button(MteLocalization.T("tracks.delete", "Delete"), "remove", index, false, true)
+                    .Text(MteLocalization.F("tracks.meta", "Start F{0}   Cursor F{1}   {2}", track.RegionStartFloor, track.CursorFloor, track.Layout), 9f, false)
                     .EndRow();
             }
             return view;
@@ -499,87 +514,102 @@ namespace KineticNapier.ADOFAIMultiTileEditor
     internal sealed class MultiTileSettingsPane : MultiTilePaneBase
     {
         public override string Id { get { return "mte.settings"; } }
-        public override string Title { get { return "Multi Tile"; } }
+        public override string Title { get { return MteLocalization.T("settings.title", "Multi Tile"); } }
 
         public override WorkbenchPaneView BuildView()
         {
-            var view = new WorkbenchPaneView().Text("Multi Tile Editor v" + Main.ModVersion, 16f, true).Spacer(6);
-            if (!Snapshot.EditorAvailable) return view.Text("Level editor is not active.", 10f, false);
+            var view = new WorkbenchPaneView()
+                .Text(MteLocalization.F("settings.heading", "Multi Tile Editor v{0}", Main.ModVersion), 16f, true)
+                .Spacer(6);
+            if (!Snapshot.EditorAvailable)
+                return view.Text(MteLocalization.T("editor.inactive", "Level editor is not active."), 10f, false);
 
             if (Snapshot.ActiveIndex >= 0)
             {
-                view.Text("Active source", 11f, true)
+                view.Text(MteLocalization.T("activeSource", "Active source"), 11f, true)
                     .BeginRow()
-                    .Text("Track", 10f, false)
+                    .Text(MteLocalization.T("track", "Track"), 10f, false)
                     .Input(Snapshot.ActiveName, "rename")
-                    .Text("Start F" + Snapshot.RegionStartFloor + "   Cursor F" + Snapshot.CursorFloor + "   " + Snapshot.AngleText + "   " + Snapshot.AngleCountText, 9f, false)
+                    .Text(MteLocalization.F("source.meta", "Start F{0}   Cursor F{1}   {2}   {3}",
+                        Snapshot.RegionStartFloor, Snapshot.CursorFloor, Snapshot.AngleText, Snapshot.AngleCountText), 9f, false)
                     .EndRow()
                     .BeginRow()
-                    .Text("Planet A", 10f, false).Input(Snapshot.PlanetATag, "planet-a")
-                    .Text("Planet B", 10f, false).Input(Snapshot.PlanetBTag, "planet-b")
-                    .Button("Initial pivot: " + (Snapshot.PivotIsA ? "A" : "B"), "pivot", "", true, true)
+                    .Text(MteLocalization.T("planetA", "Planet A"), 10f, false).Input(Snapshot.PlanetATag, "planet-a")
+                    .Text(MteLocalization.T("planetB", "Planet B"), 10f, false).Input(Snapshot.PlanetBTag, "planet-b")
+                    .Button(MteLocalization.F("initialPivot", "Initial pivot: {0}", Snapshot.PivotIsA ? "A" : "B"), "pivot", "", true, true)
                     .EndRow()
                     .BeginRow()
-                    .Button("Save track", "save", "", false, true)
-                    .Button("Set start from selection", "start", "", false, true)
+                    .Button(MteLocalization.T("saveTrack", "Save track"), "save", "", false, true)
+                    .Button(MteLocalization.T("setStart", "Set start from selection"), "start", "", false, true)
                     .EndRow()
                     .Spacer(8)
-                    .Text("Layout", 11f, true)
+                    .Text(MteLocalization.T("layout", "Layout"), 11f, true)
                     .BeginRow()
-                    .Button("Off", "wrap", ((int)CompactWrapMode.Off).ToString(), Snapshot.WrapMode == CompactWrapMode.Off, true)
-                    .Button("Tiles", "wrap", ((int)CompactWrapMode.Tiles).ToString(), Snapshot.WrapMode == CompactWrapMode.Tiles, true)
-                    .Button("Beats", "wrap", ((int)CompactWrapMode.Beats).ToString(), Snapshot.WrapMode == CompactWrapMode.Beats, true);
+                    .Button(MteLocalization.T("off", "Off"), "wrap", ((int)CompactWrapMode.Off).ToString(), Snapshot.WrapMode == CompactWrapMode.Off, true)
+                    .Button(MteLocalization.T("tiles", "Tiles"), "wrap", ((int)CompactWrapMode.Tiles).ToString(), Snapshot.WrapMode == CompactWrapMode.Tiles, true)
+                    .Button(MteLocalization.T("beats", "Beats"), "wrap", ((int)CompactWrapMode.Beats).ToString(), Snapshot.WrapMode == CompactWrapMode.Beats, true);
 
                 if (Snapshot.WrapMode == CompactWrapMode.Tiles)
-                    view.Text("Length", 10f, false).Input(Snapshot.WrapTilesText, "wrap-tiles").Text("tiles", 10f, false);
+                    view.Text(MteLocalization.T("length", "Length"), 10f, false)
+                        .Input(Snapshot.WrapTilesText, "wrap-tiles")
+                        .Text(MteLocalization.T("tiles.unit", "tiles"), 10f, false);
                 else if (Snapshot.WrapMode == CompactWrapMode.Beats)
-                    view.Text("Length", 10f, false).Input(Snapshot.WrapBeatsText, "wrap-beats").Text("beats", 10f, false);
+                    view.Text(MteLocalization.T("length", "Length"), 10f, false)
+                        .Input(Snapshot.WrapBeatsText, "wrap-beats")
+                        .Text(MteLocalization.T("beats.unit", "beats"), 10f, false);
 
                 view.EndRow()
                     .BeginRow()
-                    .Text("Virtual repeat", 10f, false)
+                    .Text(MteLocalization.T("virtualRepeat", "Virtual repeat"), 10f, false)
                     .Input(Snapshot.RepeatCountText, "repeat-text")
                     .Text("x", 10f, false)
-                    .Toggle("Return to first tile / reuse one source cycle", "reuse", Snapshot.ReuseRepeatPath)
+                    .Toggle(MteLocalization.T("reuse", "Return to first tile / reuse one source cycle"), "reuse", Snapshot.ReuseRepeatPath)
                     .EndRow()
                     .Text(Snapshot.WrapMode == CompactWrapMode.Off
-                        ? "Layout folding is off; Position Track and virtual repeat returns still use instant planet teleports."
+                        ? MteLocalization.T("layout.offDescription", "Layout folding is off; Position Track and virtual repeat returns still use instant planet teleports.")
                         : Snapshot.ActiveLayout, 9f, false)
                     .Spacer(10);
             }
             else if (Snapshot.Tracks.Count > 0)
             {
-                view.Text("Generated output is detached. Choose a track in MTE Tracks to continue editing a source track.", 10f, false).Spacer(8);
+                view.Text(MteLocalization.T("detached", "Generated output is detached. Choose a track in MTE Tracks to continue editing a source track."), 10f, false).Spacer(8);
             }
             else
             {
-                view.Text("Choose the Multi Tile start floor, then store the current chart in MTE Tracks.", 10f, false).Spacer(8);
+                view.Text(MteLocalization.T("chooseStart", "Choose the Multi Tile start floor, then store the current chart in MTE Tracks."), 10f, false).Spacer(8);
             }
 
-            view.Text("Generation", 11f, true)
+            view.Text(MteLocalization.T("generation", "Generation"), 11f, true)
                 .BeginRow()
                 .Text(Snapshot.GenerationState, 10f, true)
-                .Button("Analyze + Verify", "analyze-verify", "", false, Snapshot.CanAnalyze)
-                .Button("Generate Multi Tile", "generate", "", false, Snapshot.CanGenerate)
-                .Button("Clear", "clear-plan", "", false, Snapshot.CanClear)
+                .Button(MteLocalization.T("analyzeVerify", "Analyze + Verify"), "analyze-verify", "", false, Snapshot.CanAnalyze)
+                .Button(MteLocalization.T("generate", "Generate Multi Tile"), "generate", "", false, Snapshot.CanGenerate)
+                .Button(MteLocalization.T("clear", "Clear"), "clear-plan", "", false, Snapshot.CanClear)
                 .EndRow();
 
             if (!string.IsNullOrWhiteSpace(Snapshot.PlanSummary)) view.Text(Snapshot.PlanSummary, 9f, false);
 
             view.Spacer(8)
-                .Text((Snapshot.LastActionFailed ? "ERROR: " : "Status: ") + Snapshot.Status, 10f, Snapshot.LastActionFailed)
+                .Text((Snapshot.LastActionFailed
+                    ? MteLocalization.T("error", "ERROR: ")
+                    : MteLocalization.T("status", "Status: ")) + Snapshot.Status, 10f, Snapshot.LastActionFailed)
                 .Spacer(8)
-                .Button(Snapshot.ShowAdvanced ? "Hide advanced / diagnostics" : "Show advanced / diagnostics", "toggle-advanced", "", Snapshot.ShowAdvanced, true);
+                .Button(Snapshot.ShowAdvanced
+                    ? MteLocalization.T("hideAdvanced", "Hide advanced / diagnostics")
+                    : MteLocalization.T("showAdvanced", "Show advanced / diagnostics"),
+                    "toggle-advanced", "", Snapshot.ShowAdvanced, true);
 
             if (Snapshot.ShowAdvanced)
             {
                 view.Spacer(6)
                     .BeginRow()
-                    .Button("Analyze only", "analyze-only", "", false, Snapshot.CanAnalyze)
-                    .Button("Verify only", "verify-only", "", false, Snapshot.CanClear)
+                    .Button(MteLocalization.T("analyzeOnly", "Analyze only"), "analyze-only", "", false, Snapshot.CanAnalyze)
+                    .Button(MteLocalization.T("verifyOnly", "Verify only"), "verify-only", "", false, Snapshot.CanClear)
                     .EndRow();
                 for (int i = 0; i < Snapshot.AdvancedLines.Count; i++) view.Text(Snapshot.AdvancedLines[i], 9f, false);
-                view.Spacer(4).Text("Full diagnostic:", 10f, true).Text(Snapshot.Status, 9f, false);
+                view.Spacer(4)
+                    .Text(MteLocalization.T("fullDiagnostic", "Full diagnostic:"), 10f, true)
+                    .Text(Snapshot.Status, 9f, false);
             }
             return view;
         }
@@ -611,7 +641,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal string AngleText = "";
         internal string AngleCountText = "";
         internal string ActiveLayout = "";
-        internal string GenerationState = "Not analyzed";
+        internal string GenerationState = "";
         internal bool CanAnalyze;
         internal bool CanGenerate;
         internal bool CanClear;
