@@ -32,6 +32,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static bool OnToggle(UnityModManager.ModEntry entry, bool value)
         {
+            if (!value && ADOBase.editor != null) store.FlushAutosave(ADOBase.editor);
             enabled = value;
             EnsureOverlay();
             if (overlay != null) overlay.enabled = value;
@@ -46,18 +47,39 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             bool editorChanged = editor != lastEditor;
             bool chartChangedInPlace = !editorChanged && editor != null && ChartSessionGuard.HasExternalChange(editor);
 
-            if (lastEditor != null && (editorChanged || chartChangedInPlace))
+            if (editorChanged || chartChangedInPlace)
             {
                 store.Reset();
                 string message = chartChangedInPlace
-                    ? "Open chart changed; stale MTE tracks were cleared to prevent restoring another chart's snapshot."
-                    : "Editor instance changed; track queue was cleared.";
+                    ? "Open chart changed; stale in-memory MTE tracks were detached."
+                    : "Editor session changed.";
+
+                lastEditor = editor;
+                if (editor != null)
+                {
+                    ChartSessionGuard.AcceptCurrent(editor);
+                    string recovery;
+                    if (store.TryRestoreWorkspace(editor, out recovery))
+                        message = recovery + " Choose a track to restore its source snapshot.";
+                    else if (!string.IsNullOrWhiteSpace(recovery))
+                        message = recovery;
+                }
+
                 WorkbenchIntegration.ResetGenerationState(message);
                 WorkbenchIntegration.PublishNow(true);
             }
+            else
+            {
+                lastEditor = editor;
+                if (editor != null) ChartSessionGuard.AcceptCurrent(editor);
+            }
 
-            lastEditor = editor;
-            if (editor != null) ChartSessionGuard.AcceptCurrent(editor);
+            if (editor != null) store.AutosaveTick(editor);
+        }
+
+        internal static void FlushWorkspaceAutosave()
+        {
+            if (ADOBase.editor != null) store.FlushAutosave(ADOBase.editor);
         }
 
         private static void EnsureOverlay()
