@@ -85,6 +85,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 MotionDurationSeconds = source.MotionDurationSeconds,
                 SourceDurationBeats = source.SourceDurationBeats,
                 EffectiveBpm = source.EffectiveBpm,
+                UseInstantVisualSnap = source.UseInstantVisualSnap,
                 AmountDegrees = source.AmountDegrees,
                 SourceAmountDegrees = source.SourceAmountDegrees,
                 DestinationRadiusMultiplier = source.DestinationRadiusMultiplier,
