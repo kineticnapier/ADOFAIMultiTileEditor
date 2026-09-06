@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Web.Script.Serialization;
 using ADOFAI;
-using GDMiniJSON;
 
 namespace KineticNapier.ADOFAIMultiTileEditor
 {
@@ -202,9 +202,22 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static LevelData DecodeLevelData(string encoded)
         {
-            object raw = Json.Deserialize(encoded ?? string.Empty);
-            var dictionary = raw as Dictionary<string, object>;
-            if (dictionary == null) throw new InvalidDataException("Stored track is not valid ADOFAI level JSON.");
+            if (string.IsNullOrWhiteSpace(encoded))
+                throw new InvalidDataException("Stored track contains empty ADOFAI level JSON.");
+
+            Dictionary<string, object> dictionary;
+            try
+            {
+                var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue, RecursionLimit = 4096 };
+                dictionary = serializer.Deserialize<Dictionary<string, object>>(encoded);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidDataException("Stored track is not valid ADOFAI level JSON.", ex);
+            }
+
+            if (dictionary == null)
+                throw new InvalidDataException("Stored track is not valid ADOFAI level JSON.");
 
             var data = new LevelData();
             data.Setup();
