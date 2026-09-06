@@ -17,9 +17,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 throw new InvalidOperationException("Editor is not ready.");
             if (track == null) throw new InvalidOperationException("Track is unavailable.");
 
-            Vector2 desired = track.LayoutOffset;
-            Vector2 applied = track.AppliedLayoutOffset;
-            Vector2 delta = desired - applied;
+            // Treat X/Y as a relative nudge. This avoids stale absolute-position state
+            // after regeneration: every Apply simply moves the currently generated group
+            // by the requested amount, then resets the inputs to zero.
+            Vector2 delta = track.LayoutOffset;
             if (delta.sqrMagnitude <= Epsilon * Epsilon) return 0;
 
             LevelData original = editor.levelData.Copy();
@@ -53,8 +54,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 try { editor.SelectFloor(editor.floors[selectedFloor], true); } catch { }
             }
 
-            track.AppliedLayoutOffsetX = track.LayoutOffsetX;
-            track.AppliedLayoutOffsetY = track.LayoutOffsetY;
+            track.AppliedLayoutOffsetX += track.LayoutOffsetX;
+            track.AppliedLayoutOffsetY += track.LayoutOffsetY;
+            track.LayoutOffsetX = 0.0;
+            track.LayoutOffsetY = 0.0;
+            track.LayoutOffsetXText = "0";
+            track.LayoutOffsetYText = "0";
             return moved;
         }
 
