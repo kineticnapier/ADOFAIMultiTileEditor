@@ -14,8 +14,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             set
             {
                 visible = value;
-                if (visible && enabled) WorkbenchIntegration.EnsureRegistered();
-                else WorkbenchIntegration.Unregister();
+                if (visible && enabled)
+                {
+                    WorkbenchIntegration.EnsureRegistered();
+                    GeneratedLayoutPaneRegistration.EnsureRegistered();
+                }
+                else
+                {
+                    WorkbenchIntegration.Unregister();
+                    GeneratedLayoutPaneRegistration.Unregister();
+                }
             }
         }
 
@@ -26,13 +34,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private void OnEnable()
         {
-            if (visible) WorkbenchIntegration.EnsureRegistered();
+            if (!visible) return;
+            WorkbenchIntegration.EnsureRegistered();
+            GeneratedLayoutPaneRegistration.EnsureRegistered();
         }
 
         private void OnDisable()
         {
             Main.FlushWorkspaceAutosave();
             WorkbenchIntegration.Unregister();
+            GeneratedLayoutPaneRegistration.Unregister();
             editorWasAvailable = false;
         }
 
@@ -46,12 +57,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (!visible)
             {
                 WorkbenchIntegration.Unregister();
+                GeneratedLayoutPaneRegistration.Unregister();
                 editorWasAvailable = false;
                 return;
             }
 
             WorkbenchIntegration.EnsureRegistered();
+            GeneratedLayoutPaneRegistration.EnsureRegistered();
             WorkbenchIntegration.Tick();
+            GeneratedLayoutPaneRegistration.Tick();
 
             bool editorAvailable = ADOBase.editor != null;
             if (editorAvailable && !editorWasAvailable)
