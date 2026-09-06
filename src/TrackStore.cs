@@ -29,6 +29,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal string WrapBeatsText = "16";
         internal string RepeatCountText = "1";
 
+        // Absolute per-group layout offset. AppliedLayoutOffset remembers what the
+        // currently generated output already contains, so post-generation moves are
+        // delta-based rather than cumulative guesses.
+        internal double LayoutOffsetX;
+        internal double LayoutOffsetY;
+        internal double AppliedLayoutOffsetX;
+        internal double AppliedLayoutOffsetY;
+        internal string LayoutOffsetXText = "0";
+        internal string LayoutOffsetYText = "0";
+
         internal TrackSlot(string name, LevelData data, int cursorFloor)
         {
             Name = name;
@@ -37,6 +47,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             RegionStartFloor = cursorFloor;
             PivotIsA = false;
             ReuseRepeatPath = true;
+        }
+
+        internal Vector2 LayoutOffset
+        {
+            get { return new Vector2((float)LayoutOffsetX, (float)LayoutOffsetY); }
+        }
+
+        internal Vector2 AppliedLayoutOffset
+        {
+            get { return new Vector2((float)AppliedLayoutOffsetX, (float)AppliedLayoutOffsetY); }
         }
 
         internal AngleSample CurrentAngle
@@ -84,6 +104,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private readonly List<TrackSlot> tracks = new List<TrackSlot>();
         private int activeIndex = -1;
         private int nextAutoTagId = 1;
+        private float nextAutosaveTime;
 
         internal TrackStore()
         {
@@ -99,6 +120,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             tracks.Clear();
             activeIndex = -1;
             nextAutoTagId = 1;
+            nextAutosaveTime = 0f;
             TrackSlot.ReplaceRegistration(tracks);
             ChartSessionGuard.Reset();
         }
@@ -106,6 +128,75 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal void DetachActive()
         {
             activeIndex = -1;
+        }
+
+        internal bool TryRestoreWorkspace(scnEditor editor, out string message)
+        {
+            message = string.Empty;
+            List<TrackSlot> restored;
+            int restoredNextTag;
+            if (!WorkspacePersistence.TryLoad(editor, out restored, out restoredNextTag, out message)) return false;
+
+            tracks.Clear();
+            for (int i = 0; i < restored.Count; i++)
+            {
+                TrackSlot track = restored[i];
+                ClampFloors(track);
+                tracks.Add(track);
+            }
+            nextAutoTagId = Math.Max(1, restoredNextTag);
+
+            // Never overwrite the freshly opened chart automatically. Recovered source
+            // snapshots are available immediately, but the user explicitly chooses which
+            // one to restore by clicking it in MTE Tracks.
+            activeIndex = -1;
+            TrackSlot.ReplaceRegistration(tracks);
+            ChartSessionGuard.AcceptCurrent(editor);
+            return tracks.Count > 0;
+        }
+
+        internal void AutosaveTick(scnEditor editor)
+        {
+            if (tracks.Count == 0 || editor == null || editor.levelData == null) return;
+            if (Time.realtimeSinceStartup < nextAutosaveTime) return;
+            nextAutosaveTime = Time.realtimeSinceStartup + 5f;
+            FlushAutosave(editor);
+        }
+
+        internal void FlushAutosave(scnEditor editor)
+        {
+            if (tracks.Count == 0 || editor == null || editor.levelData == null) return;
+            try
+            {
+                if (activeIndex >= 0 && activeIndex < tracks.Count)
+                {
+                    ChartSessionGuard.EnsureCurrent(editor);
+                    CaptureActive(editor);
+                }
+                WorkspacePersistence.Save(editor, tracks, nextAutoTagId);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[ADOFAIMultiTileEditor] Workspace autosave failed: " + ex.Message);
+            }
+        }
+
+        internal void PersistMetadata(scnEditor editor)
+        {
+            if (tracks.Count == 0 || editor == null || editor.levelData == null) return;
+            try { WorkspacePersistence.Save(editor, tracks, nextAutoTagId); }
+            catch (Exception ex) { Debug.LogWarning("[ADOFAIMultiTileEditor] Workspace metadata save failed: " + ex.Message); }
+        }
+
+        internal void MarkGeneratedOffsetsApplied(scnEditor editor)
+        {
+            for (int i = 0; i < tracks.Count; i++)
+            {
+                TrackSlot track = tracks[i];
+                track.AppliedLayoutOffsetX = track.LayoutOffsetX;
+                track.AppliedLayoutOffsetY = track.LayoutOffsetY;
+            }
+            PersistMetadata(editor);
         }
 
         internal int StoreCurrent(scnEditor editor, string name)
@@ -134,6 +225,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             ClampFloors(slot);
             TrackSlot.ReplaceRegistration(tracks);
             ChartSessionGuard.AcceptCurrent(editor);
+            PersistMetadata(editor);
             return activeIndex;
         }
 
@@ -141,6 +233,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             if (activeIndex < 0 || activeIndex >= tracks.Count || editor == null || editor.levelData == null) return;
             ChartSessionGuard.EnsureCurrent(editor);
+            CaptureActive(editor);
+            PersistMetadata(editor);
+        }
+
+        private void CaptureActive(scnEditor editor)
+        {
             TrackSlot track = tracks[activeIndex];
             track.Data = editor.levelData.Copy();
             track.Angles = GameAngleProbe.Capture(editor);
@@ -165,6 +263,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             TrackSlot track = tracks[activeIndex];
             track.RegionStartFloor = selected;
             ClampFloors(track);
+            PersistMetadata(editor);
         }
 
         internal void SwitchTo(scnEditor editor, int index)
@@ -185,6 +284,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             int floor = tracks[index].CursorFloor;
             if (floor >= 0 && floor < editor.floors.Count)
                 editor.SelectFloor(editor.floors[floor], true);
+            PersistMetadata(editor);
         }
 
         internal void Remove(scnEditor editor, int index)
@@ -213,6 +313,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
             TrackSlot.ReplaceRegistration(tracks);
             ChartSessionGuard.AcceptCurrent(editor);
+            PersistMetadata(editor);
         }
 
         internal static void RestoreSnapshot(scnEditor editor, LevelData snapshot, bool updateDecorations)
