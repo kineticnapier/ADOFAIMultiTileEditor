@@ -14,6 +14,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private const double TimeConsistencyRelative = 2.0e-4;
         private const double MinBpm = 1.0e-5;
         private const double PrefixAngleTolerance = 0.001;
+        private const double FastVisualSnapThresholdSeconds = 0.05;
 
         internal static GenerationPlan BuildPlan(scnEditor editor, IList<TrackSlot> tracks)
         {
@@ -55,10 +56,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             plan.RegionInheritedIsCCW = analyzed[0].RegionInheritedIsCCW;
             plan.StartSeconds = analyzed[0].StartSeconds;
             plan.EndSeconds = analyzed[0].EndSeconds;
+            int instantVisuals = CountInstantVisualSegments(analyzed);
             plan.Diagnostic = plan.Diagnostic.TrimEnd('.')
                 + "; region starts at F" + plan.RegionStartFloor
                 + "; constant master BPM " + masterBpm.ToString("0.######", CultureInfo.InvariantCulture)
-                + " (source SetSpeed maps baked into region-relative real time; Pause is retained as stationary delay before each orbit, including terminal-floor wait time).";
+                + " (source SetSpeed maps baked into region-relative real time; Pause is retained as stationary delay before each orbit, including terminal-floor wait time)"
+                + (instantVisuals > 0
+                    ? "; " + instantVisuals + " ultra-fast visual segment(s) use deterministic snap fallback at <= "
+                        + (FastVisualSnapThresholdSeconds * 1000.0).ToString("0", CultureInfo.InvariantCulture) + " ms"
+                    : "")
+                + ".";
             return plan;
         }
 
@@ -210,6 +217,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     }
                 }
 
+                bool useInstantVisualSnap = motionDurationSeconds <= FastVisualSnapThresholdSeconds + 1.0e-9;
+                if (useInstantVisualSnap)
+                    source += " + instant visual snap (" + (motionDurationSeconds * 1000.0).ToString("0.###", CultureInfo.InvariantCulture) + " ms)";
+
                 double durationSeconds = pauseSeconds + motionDurationSeconds;
                 double startSeconds = cursorSeconds;
                 double endSeconds = startSeconds + durationSeconds;
@@ -229,6 +240,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     MotionDurationSeconds = motionDurationSeconds,
                     SourceDurationBeats = sourceDurationBeats,
                     EffectiveBpm = effectiveBpm,
+                    UseInstantVisualSnap = useInstantVisualSnap,
                     AmountDegrees = amount,
                     AngleSource = source,
                     MovingTag = moving,
@@ -292,6 +304,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 }
             }
             return masterBpm;
+        }
+
+        private static int CountInstantVisualSegments(IList<AnalyzedTrack> tracks)
+        {
+            int count = 0;
+            for (int t = 0; t < tracks.Count; t++)
+                for (int s = 0; s < tracks[t].Segments.Count; s++)
+                    if (tracks[t].Segments[s].UseInstantVisualSnap) count++;
+            return count;
         }
 
         private static void ValidateCommonRegionStartAndPrefix(IList<TrackSlot> tracks)
