@@ -152,6 +152,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (actions == null)
                 throw new InvalidOperationException("LevelData.levelEvents is not list-compatible in this game build.");
 
+            TrackSegment templateSegment = FindFirstOrbitSegment(plan);
+            if (templateSegment == null)
+            {
+                // Every visual segment is in ultra-fast snap mode. OrbitEmitter will
+                // remove any stale generated Orbit actions and CompactLayoutPostProcessor
+                // will emit deterministic position snaps instead, so no template is needed.
+                return false;
+            }
+
             for (int i = 0; i < actions.Count; i++)
             {
                 LevelEvent ev = actions[i] as LevelEvent;
@@ -159,25 +168,37 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     return false;
             }
 
-            if (plan.Tracks.Count == 0 || plan.Tracks[0].Segments.Count == 0)
-                throw new InvalidOperationException("The analyzed plan has no segment available for an Orbit template.");
-
-            TrackSegment segment = plan.Tracks[0].Segments[0];
-            double motionDuration = segment.MotionDurationBeats > TimelineMerger.BeatEpsilon
-                ? segment.MotionDurationBeats
-                : segment.DurationBeats;
+            double motionDuration = templateSegment.MotionDurationBeats > TimelineMerger.BeatEpsilon
+                ? templateSegment.MotionDurationBeats
+                : templateSegment.DurationBeats;
             EditorToolkitBridge.EventsFor(levelData)
                 .Create("OrbitDecoration", plan.RegionStartFloor, EventCollection.Actions)
                 .Set("duration", motionDuration)
-                .Set("tag", segment.MovingTag)
-                .Set("centerTag", segment.CenterTag)
-                .Set("amount", segment.AmountDegrees)
+                .Set("tag", templateSegment.MovingTag)
+                .Set("centerTag", templateSegment.CenterTag)
+                .Set("amount", templateSegment.AmountDegrees)
                 .Set("lockRotation", false)
                 .Set("dstRadiusMultiplier", 1.0)
                 .Set("ease", "Linear")
-                .Set("angleOffset", Math.Max(0.0, segment.PauseDurationBeats) * 180.0)
+                .Set("angleOffset", Math.Max(0.0, templateSegment.PauseDurationBeats) * 180.0)
                 .Set("eventTag", "");
             return true;
+        }
+
+        private static TrackSegment FindFirstOrbitSegment(GenerationPlan plan)
+        {
+            if (plan == null) return null;
+            for (int t = 0; t < plan.Tracks.Count; t++)
+            {
+                AnalyzedTrack track = plan.Tracks[t];
+                if (track == null) continue;
+                for (int s = 0; s < track.Segments.Count; s++)
+                {
+                    TrackSegment segment = track.Segments[s];
+                    if (segment != null && !segment.UseInstantVisualSnap) return segment;
+                }
+            }
+            return null;
         }
 
         private static bool IsConfiguredOrbitPair(LevelEvent ev, GenerationPlan plan)
