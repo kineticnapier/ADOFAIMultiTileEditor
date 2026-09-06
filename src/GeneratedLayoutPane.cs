@@ -51,7 +51,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
     internal sealed class GeneratedLayoutPane : IDockablePane
     {
-        private string status = "Set an absolute X/Y offset for a generated group, then Apply.";
+        private string status = "Enter how far to move the generated group, then Apply.";
 
         public string Id { get { return "mte.layout"; } }
         public string Title { get { return MteLocalization.T("layoutPane.title", "MTE Layout"); } }
@@ -61,7 +61,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             var view = new WorkbenchPaneView()
                 .Text(MteLocalization.T("layoutPane.heading", "Generated layout"), 16f, true)
-                .Text(MteLocalization.T("layoutPane.help", "Move a whole generated group without selecting every Floor decoration. Planet A/B and all MTE-generated tiles move together."), 9f, false)
+                .Text(MteLocalization.T("layoutPane.help", "Nudge a whole generated group without selecting every decoration. Planet A/B and all MTE-generated Floor objects move together; X/Y reset to 0 after Apply."), 9f, false)
                 .Spacer(6);
 
             TrackStore store = TrackStore.Current;
@@ -75,11 +75,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 string index = i.ToString(CultureInfo.InvariantCulture);
                 view.Text(string.IsNullOrWhiteSpace(track.Name) ? "Track " + (i + 1) : track.Name, 11f, true)
                     .BeginRow()
-                    .Text("X", 10f, false)
+                    .Text("Move X", 10f, false)
                     .Input(track.LayoutOffsetXText ?? "0", "layout-x:" + index)
                     .Text("Y", 10f, false)
                     .Input(track.LayoutOffsetYText ?? "0", "layout-y:" + index)
-                    .Button(MteLocalization.T("layoutPane.apply", "Apply to generated"), "layout-apply:" + index, "", false, true)
+                    .Button(MteLocalization.T("layoutPane.apply", "Apply"), "layout-apply:" + index, "", false, true)
                     .EndRow();
             }
 
@@ -105,15 +105,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (command == "layout-x")
                 {
                     track.LayoutOffsetXText = argument ?? string.Empty;
-                    if (double.TryParse(track.LayoutOffsetXText, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
-                        && !double.IsNaN(value) && !double.IsInfinity(value)) track.LayoutOffsetX = value;
+                    track.LayoutOffsetX = double.TryParse(track.LayoutOffsetXText, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+                        && !double.IsNaN(value) && !double.IsInfinity(value) ? value : 0.0;
                     store.PersistMetadata(editor);
                 }
                 else if (command == "layout-y")
                 {
                     track.LayoutOffsetYText = argument ?? string.Empty;
-                    if (double.TryParse(track.LayoutOffsetYText, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
-                        && !double.IsNaN(value) && !double.IsInfinity(value)) track.LayoutOffsetY = value;
+                    track.LayoutOffsetY = double.TryParse(track.LayoutOffsetYText, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+                        && !double.IsNaN(value) && !double.IsInfinity(value) ? value : 0.0;
                     store.PersistMetadata(editor);
                 }
                 else if (command == "layout-apply")
@@ -121,7 +121,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     int moved = GeneratedLayoutMover.Apply(editor, track, index);
                     store.PersistMetadata(editor);
                     status = moved == 0
-                        ? "Already at that offset."
+                        ? "Move is 0; nothing changed."
                         : "Moved " + moved + " generated object(s) for " + track.Name + ".";
                 }
             }
