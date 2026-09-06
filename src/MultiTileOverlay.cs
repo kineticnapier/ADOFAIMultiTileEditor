@@ -31,8 +31,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private void OnDisable()
         {
+            Main.FlushWorkspaceAutosave();
             WorkbenchIntegration.Unregister();
             editorWasAvailable = false;
+        }
+
+        private void OnApplicationQuit()
+        {
+            Main.FlushWorkspaceAutosave();
         }
 
         private void Update()
@@ -44,7 +50,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 return;
             }
 
-            // Keep the provider registered while moving between menu/editor scenes.
             WorkbenchIntegration.EnsureRegistered();
             WorkbenchIntegration.Tick();
 
