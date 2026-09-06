@@ -31,6 +31,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal double SourceDurationBeats;
         internal double EffectiveBpm;
 
+        // Extremely short PACL2 OrbitDecoration tweens can be skipped between
+        // render frames and leave the alternating planet pair in an invalid
+        // intermediate state. For intervals that are visually indistinguishable
+        // from an instant hit, use a deterministic zero-duration position snap
+        // instead of an orbit tween.
+        internal bool UseInstantVisualSnap;
+
         internal double AmountDegrees;
         internal double SourceAmountDegrees;
         internal double DestinationRadiusMultiplier = 1.0;
