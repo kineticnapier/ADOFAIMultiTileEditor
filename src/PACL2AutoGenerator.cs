@@ -42,6 +42,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
                 SourceEventTransferResult eventResult = SourceEventTransfer.ApplyAndCommit(editor, tracks, plan);
                 string terminalPauseResult = TerminalPauseEmitter.Apply(editor.levelData, plan);
+                string fastVisualResult = FastVisualSnapEmitter.ApplyAndCommit(editor, tracks, plan);
 
                 editor.ApplyEventsToFloors();
                 editor.UpdateDecorationObjects();
@@ -50,7 +51,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     + " planet decoration(s)"
                     + (createdOrbitTemplate ? " and an internal Orbit template" : "")
                     + "; generated event properties were typed by ADOFAI.EditorToolkit metadata conversion. "
-                    + eventResult.Diagnostic + " " + terminalPauseResult;
+                    + eventResult.Diagnostic + " " + terminalPauseResult + " " + fastVisualResult;
 
                 success = true;
                 return result;
@@ -156,8 +157,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (templateSegment == null)
             {
                 // Every visual segment is in ultra-fast snap mode. OrbitEmitter will
-                // remove any stale generated Orbit actions and CompactLayoutPostProcessor
-                // will emit deterministic position snaps instead, so no template is needed.
+                // remove any stale generated Orbit actions and FastVisualSnapEmitter
+                // will emit deterministic endpoint placement instead, so no template is needed.
                 return false;
             }
 
