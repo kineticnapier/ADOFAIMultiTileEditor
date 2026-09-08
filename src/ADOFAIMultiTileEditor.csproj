@@ -43,6 +43,8 @@
     <Compile Include="WorkspacePersistence.cs" />
     <Compile Include="GeneratedLayoutMover.cs" />
     <Compile Include="GeneratedLayoutPane.cs" />
+    <Compile Include="DynamicPagedLayoutPostProcessor.cs" />
+    <Compile Include="DynamicPagingPane.cs" />
     <Compile Include="MultiTileOverlay.cs" />
     <Compile Include="WorkbenchIntegration.cs" />
     <Compile Include="MultiTileWorkspace.cs" />
