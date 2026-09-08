@@ -64,7 +64,22 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 { "angles", "{0} angles" },
                 { "empty", "empty" },
                 { "planSummary", "Start F{0}   Tracks {1}   Duration {2} sec   Master {3} BPM   Layout/repeat per group" },
-                { "initialStatus", "Select the floor where Multi Tile should begin, then store each source chart as a track." }
+                { "initialStatus", "Select the floor where Multi Tile should begin, then store each source chart as a track." },
+                { "paging.title", "MTE Paging" },
+                { "paging.heading", "Dynamic paging" },
+                { "paging.help", "For dense Hz charts, split each generated Floor group into reusable pages. Inactive pages stay off-screen and zero-duration MoveDecorations swaps pages at page boundaries." },
+                { "paging.empty", "No MTE tracks are stored." },
+                { "paging.enabled", "Paged" },
+                { "paging.pageSize", "Page size" },
+                { "paging.tilesPerPage", "tiles / page" },
+                { "paging.note", "Paged mode forces the normal Off/Tiles/Beats layout to Off. Page-boundary tiles are duplicated so the landing tile remains visible during the swap." },
+                { "paging.apply", "Apply paging to generated output" },
+                { "paging.queued", "Paging update queued." },
+                { "paging.savedForGenerate", "Paging settings saved. Generate Multi Tile to apply them to the output." },
+                { "paging.disabledOutput", "Paging is disabled. Regenerate Multi Tile to restore a normal output layout." },
+                { "paging.enabledQueued", "Paged mode enabled; it will apply after generation or to the detached output." },
+                { "paging.disabledQueued", "Paged mode disabled; regenerate to remove paging from an existing output." },
+                { "paging.sizeQueued", "Page size updated." }
             });
 
             WorkbenchLocalization.Register(Owner, "ja-JP", "日本語", new Dictionary<string, string>
@@ -118,7 +133,22 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 { "angles", "{0}角度" },
                 { "empty", "空" },
                 { "planSummary", "開始 F{0}   トラック {1}   長さ {2}秒   Master {3} BPM   グループ別レイアウト/リピート" },
-                { "initialStatus", "Multi Tileを開始するタイルを選択して、各ソース譜面をトラックとして保存してください。" }
+                { "initialStatus", "Multi Tileを開始するタイルを選択して、各ソース譜面をトラックとして保存してください。" },
+                { "paging.title", "MTEページング" },
+                { "paging.heading", "動的ページング" },
+                { "paging.help", "高密度なHz譜面向けに、生成されたFloor装飾を再利用可能なページへ分割します。非表示ページは画面外へ退避し、ページ境界で0秒のMoveDecorationsを使って入れ替えます。" },
+                { "paging.empty", "保存されたMTEトラックがありません。" },
+                { "paging.enabled", "ページング" },
+                { "paging.pageSize", "ページ長" },
+                { "paging.tilesPerPage", "タイル / ページ" },
+                { "paging.note", "ページング中は通常のオフ/タイル/拍レイアウトをオフに固定します。境界タイルを複製するため、切り替え時も着地点が消えません。" },
+                { "paging.apply", "生成結果へページングを適用" },
+                { "paging.queued", "ページング更新を予約しました。" },
+                { "paging.savedForGenerate", "ページング設定を保存しました。Multi Tile生成時に適用されます。" },
+                { "paging.disabledOutput", "ページングは無効です。既存の生成結果を通常配置へ戻すには再生成してください。" },
+                { "paging.enabledQueued", "ページングを有効にしました。生成後、または切り離された生成結果へ適用されます。" },
+                { "paging.disabledQueued", "ページングを無効にしました。既存の生成結果から外すには再生成してください。" },
+                { "paging.sizeQueued", "ページ長を更新しました。" }
             });
 
             WorkbenchLocalization.LanguageChanged += delegate
