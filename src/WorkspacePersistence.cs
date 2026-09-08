@@ -11,7 +11,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
     internal static class WorkspacePersistence
     {
         private const string Magic = "ADOFAI-MTE-WORKSPACE";
-        private const int FormatVersion = 1;
+        private const int FormatVersion = 2;
+        private const int OldestSupportedFormatVersion = 1;
 
         internal static bool CanPersist(scnEditor editor)
         {
@@ -65,6 +66,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         writer.Write(track.AppliedLayoutOffsetY);
                         writer.Write(track.LayoutOffsetXText ?? string.Empty);
                         writer.Write(track.LayoutOffsetYText ?? string.Empty);
+
+                        // v2: dynamic paging settings. Keeping this behind an explicit
+                        // workspace format version lets future mod versions migrate the
+                        // autosave instead of discarding in-progress source snapshots.
+                        writer.Write(track.DynamicPagingEnabled);
+                        writer.Write(Math.Max(2, track.PageTiles));
+                        writer.Write(track.PageTilesText ?? "64");
+
                         writer.Write(track.Data.Encode() ?? string.Empty);
                     }
                     writer.Flush();
@@ -100,8 +109,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 try
                 {
-                    LoadFile(path, chartPath, tracks, out nextAutoTagId);
-                    message = "Recovered " + tracks.Count + " MTE track(s) from autosave.";
+                    int loadedVersion;
+                    LoadFile(path, chartPath, tracks, out nextAutoTagId, out loadedVersion);
+                    message = "Recovered " + tracks.Count + " MTE track(s) from autosave."
+                        + (loadedVersion < FormatVersion ? " Workspace format migrated from v" + loadedVersion + " to v" + FormatVersion + "." : string.Empty);
                     return tracks.Count > 0;
                 }
                 catch (Exception ex)
@@ -117,9 +128,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 try
                 {
-                    LoadFile(backup, chartPath, tracks, out nextAutoTagId);
+                    int loadedVersion;
+                    LoadFile(backup, chartPath, tracks, out nextAutoTagId, out loadedVersion);
                     message = "Recovered " + tracks.Count + " MTE track(s) from backup autosave."
-                        + (primaryError != null ? " Primary autosave was unreadable." : string.Empty);
+                        + (primaryError != null ? " Primary autosave was unreadable." : string.Empty)
+                        + (loadedVersion < FormatVersion ? " Workspace format migrated from v" + loadedVersion + " to v" + FormatVersion + "." : string.Empty);
                     return tracks.Count > 0;
                 }
                 catch { }
@@ -130,7 +143,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             return false;
         }
 
-        private static void LoadFile(string path, string currentChartPath, IList<TrackSlot> output, out int nextAutoTagId)
+        private static void LoadFile(
+            string path,
+            string currentChartPath,
+            IList<TrackSlot> output,
+            out int nextAutoTagId,
+            out int loadedVersion)
         {
             using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
             using (var reader = new BinaryReader(stream, Encoding.UTF8))
@@ -138,7 +156,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (!string.Equals(reader.ReadString(), Magic, StringComparison.Ordinal))
                     throw new InvalidDataException("Unknown MTE workspace header.");
                 int version = reader.ReadInt32();
-                if (version != FormatVersion)
+                loadedVersion = version;
+                if (version < OldestSupportedFormatVersion || version > FormatVersion)
                     throw new InvalidDataException("Unsupported MTE workspace format " + version + ".");
 
                 string savedPath = reader.ReadString();
@@ -171,8 +190,18 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     double appliedY = reader.ReadDouble();
                     string offsetXText = reader.ReadString();
                     string offsetYText = reader.ReadString();
-                    string encoded = reader.ReadString();
 
+                    bool dynamicPaging = false;
+                    int pageTiles = 64;
+                    string pageTilesText = "64";
+                    if (version >= 2)
+                    {
+                        dynamicPaging = reader.ReadBoolean();
+                        pageTiles = Math.Max(2, reader.ReadInt32());
+                        pageTilesText = reader.ReadString();
+                    }
+
+                    string encoded = reader.ReadString();
                     LevelData data = DecodeLevelData(encoded);
                     var track = new TrackSlot(name, data, cursorFloor)
                     {
@@ -193,8 +222,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         AppliedLayoutOffsetX = appliedX,
                         AppliedLayoutOffsetY = appliedY,
                         LayoutOffsetXText = string.IsNullOrEmpty(offsetXText) ? "0" : offsetXText,
-                        LayoutOffsetYText = string.IsNullOrEmpty(offsetYText) ? "0" : offsetYText
+                        LayoutOffsetYText = string.IsNullOrEmpty(offsetYText) ? "0" : offsetYText,
+                        DynamicPagingEnabled = dynamicPaging,
+                        PageTiles = pageTiles,
+                        PageTilesText = string.IsNullOrEmpty(pageTilesText) ? pageTiles.ToString() : pageTilesText
                     };
+                    if (track.DynamicPagingEnabled) track.WrapMode = CompactWrapMode.Off;
                     output.Add(track);
                 }
             }
