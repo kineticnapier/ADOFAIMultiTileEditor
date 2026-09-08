@@ -29,6 +29,13 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal string WrapBeatsText = "16";
         internal string RepeatCountText = "1";
 
+        // Dynamic paging is a fourth visual layout mode layered on top of the normal
+        // generator. It deliberately forces CompactWrapMode.Off so the page transition
+        // teleports do not fight the static Tiles/Beats folding teleports.
+        internal bool DynamicPagingEnabled;
+        internal int PageTiles = 64;
+        internal string PageTilesText = "64";
+
         // Absolute per-group layout offset. AppliedLayoutOffset remembers what the
         // currently generated output already contains, so post-generation moves are
         // delta-based rather than cumulative guesses.
@@ -128,6 +135,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal void DetachActive()
         {
             activeIndex = -1;
+            if (DynamicPagedLayoutPostProcessor.AnyEnabled(tracks))
+                DynamicPagingRuntime.RequestApply("Generated output is ready; applying dynamic paging.");
         }
 
         internal bool TryRestoreWorkspace(scnEditor editor, out string message)
