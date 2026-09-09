@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using ADOFAI;
 using KineticNapier.ADOFAIWorkbench;
 
 namespace KineticNapier.ADOFAIMultiTileEditor
@@ -18,6 +19,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static string status = "";
         private static bool lastActionFailed;
         private static bool showAdvanced;
+        private static int pendingReplaceIndex = -1;
 
         internal static void EnsureRegistered()
         {
@@ -74,9 +76,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             scnEditor editor = ADOBase.editor;
             snapshot.EditorAvailable = editor != null;
             snapshot.ActiveIndex = store != null ? store.ActiveIndex : -1;
+            snapshot.PendingReplaceIndex = pendingReplaceIndex;
             snapshot.NewTrackName = newTrackName ?? "";
             snapshot.Status = string.IsNullOrWhiteSpace(status)
-                ? MteLocalization.T("initialStatus", "Select the floor where Multi Tile should begin, then store each source chart as a track.")
+                ? MteLocalization.T("initialStatus", "Store each source chart as an immutable MTE snapshot, then analyze the stored snapshots.")
                 : status;
             snapshot.LastActionFailed = lastActionFailed;
             snapshot.ShowAdvanced = showAdvanced;
@@ -85,6 +88,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 lastPlan = null;
                 lastPathPreview = null;
+                pendingReplaceIndex = -1;
+                snapshot.PendingReplaceIndex = -1;
             }
 
             if (store != null)
@@ -105,27 +110,28 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
                 if (store.ActiveIndex >= 0 && store.ActiveIndex < store.Tracks.Count)
                 {
-                    TrackSlot active = store.Tracks[store.ActiveIndex];
-                    if (active != null)
+                    TrackSlot selected = store.Tracks[store.ActiveIndex];
+                    if (selected != null)
                     {
-                        snapshot.ActiveName = string.IsNullOrWhiteSpace(active.Name) ? "Track " + (store.ActiveIndex + 1) : active.Name;
-                        snapshot.RegionStartFloor = active.RegionStartFloor;
-                        snapshot.CursorFloor = active.CursorFloor;
-                        snapshot.PivotIsA = active.PivotIsA;
-                        snapshot.WrapMode = active.WrapMode;
-                        snapshot.WrapTilesText = active.WrapTilesText ?? active.WrapEveryTiles.ToString(CultureInfo.InvariantCulture);
-                        snapshot.WrapBeatsText = active.WrapBeatsText ?? active.WrapEveryBeats.ToString(CultureInfo.InvariantCulture);
-                        snapshot.RepeatCountText = active.RepeatCountText ?? active.RepeatCount.ToString(CultureInfo.InvariantCulture);
-                        snapshot.RepeatCount = active.RepeatCount;
-                        snapshot.ReuseRepeatPath = active.ReuseRepeatPath;
-                        snapshot.PlanetATag = active.PlanetATag ?? "";
-                        snapshot.PlanetBTag = active.PlanetBTag ?? "";
-                        AngleSample angle = active.CurrentAngle;
+                        snapshot.ActiveName = string.IsNullOrWhiteSpace(selected.Name) ? "Track " + (store.ActiveIndex + 1) : selected.Name;
+                        snapshot.RegionStartFloor = selected.RegionStartFloor;
+                        snapshot.CursorFloor = selected.CursorFloor;
+                        snapshot.PivotIsA = selected.PivotIsA;
+                        snapshot.WrapMode = selected.WrapMode;
+                        snapshot.WrapTilesText = selected.WrapTilesText ?? selected.WrapEveryTiles.ToString(CultureInfo.InvariantCulture);
+                        snapshot.WrapBeatsText = selected.WrapBeatsText ?? selected.WrapEveryBeats.ToString(CultureInfo.InvariantCulture);
+                        snapshot.RepeatCountText = selected.RepeatCountText ?? selected.RepeatCount.ToString(CultureInfo.InvariantCulture);
+                        snapshot.RepeatCount = selected.RepeatCount;
+                        snapshot.ReuseRepeatPath = selected.ReuseRepeatPath;
+                        snapshot.PlanetATag = selected.PlanetATag ?? "";
+                        snapshot.PlanetBTag = selected.PlanetBTag ?? "";
+                        snapshot.ActiveLayout = CompactLayoutPostProcessor.Describe(selected);
+                        AngleSample angle = selected.CurrentAngle;
                         snapshot.AngleText = angle.Valid
                             ? angle.Degrees.ToString("0.###", CultureInfo.InvariantCulture) + "°"
                             : MteLocalization.T("angleUnknown", "angle ?");
-                        snapshot.AngleCountText = active.Data != null && active.Data.angleData != null
-                            ? MteLocalization.F("angles", "{0} angles", active.Data.angleData.Count)
+                        snapshot.AngleCountText = selected.Data != null && selected.Data.angleData != null
+                            ? MteLocalization.F("angles", "{0} angles", selected.Data.angleData.Count)
                             : MteLocalization.T("empty", "empty");
                     }
                 }
@@ -135,8 +141,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             else if (lastPathPreview == null) snapshot.GenerationState = MteLocalization.T("state.analyzed", "Analyzed");
             else snapshot.GenerationState = MteLocalization.T("state.ready", "Ready");
 
-            snapshot.CanAnalyze = snapshot.EditorAvailable && snapshot.ActiveIndex >= 0 && snapshot.Tracks.Count > 0;
-            snapshot.CanGenerate = lastPlan != null && lastPathPreview != null;
+            // Analysis reads TrackSlot.Data only. A selected/loaded source is not required.
+            snapshot.CanAnalyze = snapshot.EditorAvailable && snapshot.Tracks.Count > 0;
+            snapshot.CanGenerate = lastPlan != null && lastPathPreview != null && snapshot.Tracks.Count > 0;
             snapshot.CanClear = lastPlan != null || lastPathPreview != null;
 
             if (lastPlan != null)
@@ -157,7 +164,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         private static void BuildAdvancedLines(MultiTileSnapshot snapshot)
         {
-            snapshot.AdvancedLines.Add("Editor binding: " + (snapshot.ActiveIndex >= 0 ? "source track #" + (snapshot.ActiveIndex + 1) : "detached output/base"));
+            snapshot.AdvancedLines.Add("Snapshot model: TrackSlot.Data is immutable unless the user explicitly confirms Replace with current.");
+            snapshot.AdvancedLines.Add("Selected snapshot: " + (snapshot.ActiveIndex >= 0 ? "#" + (snapshot.ActiveIndex + 1) : "none")
+                + ". Selection changes MTE settings only; editor contents are independent and never auto-saved into a snapshot.");
             snapshot.AdvancedLines.Add("Each planet group has its own Off/Tiles/Beats layout length and virtual-repeat settings. PositionTrack position and layout jumps use instant rigid planet teleports.");
             snapshot.AdvancedLines.Add("Virtual repeat expands timing/orbits from one stored source cycle; between cycles the group returns to that cycle's first tile and reuses the same Floor preview.");
             snapshot.AdvancedLines.Add(SourceEventTransfer.GetCompatibilitySummary());
@@ -253,13 +262,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             scnEditor editor = ADOBase.editor;
             TrackStore store = TrackStore.Current;
-            if (editor == null || store == null || store.ActiveIndex < 0) return;
+            if (editor == null || store == null || store.Tracks.Count == 0) return;
             TryAction(delegate
             {
-                store.SaveActive(editor);
                 lastPlan = TrackAnalyzer.BuildPlan(editor, store.Tracks);
                 lastPathPreview = MasterPathBuilder.BuildAndVerify(editor, lastPlan);
-                status = "Ready: " + lastPlan.Tracks.Count + " tracks, " + lastPlan.Anchors.Count + " master anchors, "
+                status = "Ready: " + lastPlan.Tracks.Count + " immutable snapshots, " + lastPlan.Anchors.Count + " master anchors, "
                     + (lastPlan.EndSeconds - lastPlan.StartSeconds).ToString("0.###", CultureInfo.InvariantCulture) + " sec.";
             });
         }
@@ -268,10 +276,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             scnEditor editor = ADOBase.editor;
             TrackStore store = TrackStore.Current;
-            if (editor == null || store == null || store.ActiveIndex < 0) return;
+            if (editor == null || store == null || store.Tracks.Count == 0) return;
             TryAction(delegate
             {
-                store.SaveActive(editor);
                 lastPlan = TrackAnalyzer.BuildPlan(editor, store.Tracks);
                 lastPathPreview = null;
                 status = lastPlan.Diagnostic;
@@ -293,18 +300,45 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             scnEditor editor = ADOBase.editor;
             TrackStore store = TrackStore.Current;
-            if (editor == null || store == null || lastPlan == null || lastPathPreview == null) return;
+            if (editor == null || store == null || store.Tracks.Count == 0 || lastPlan == null || lastPathPreview == null) return;
             TryAction(delegate
             {
-                int baseTrackIndex = store.ActiveIndex;
-                OrbitCommitResult orbitResult = MasterOutputGenerator.GenerateAndCommit(editor, lastPlan, lastPathPreview, store.Tracks, baseTrackIndex);
-                TileDecorationResult tileResult = FixedTileDecorationGenerator.GenerateAndCommit(editor, store.Tracks, lastPlan);
-                string previewFinish = TilePreviewPostProcessor.ApplyAndCommit(editor, store.Tracks, lastPlan);
-                string compactFinish = CompactLayoutPostProcessor.ApplyAndCommit(editor, store.Tracks, lastPlan);
-                store.DetachActive();
-                status = "Generated successfully. " + orbitResult.Emitted + " Orbit action(s), " + tileResult.Created
-                    + " Floor decoration(s). " + previewFinish + " " + compactFinish
-                    + " Output is detached; choose a track to resume source editing.";
+                int baseTrackIndex = store.ActiveIndex >= 0 && store.ActiveIndex < store.Tracks.Count
+                    ? store.ActiveIndex
+                    : 0;
+                LevelData beforeGeneration = editor.levelData.Copy();
+                int selectedFloor = GameAngleProbe.TryGetSelectedFloorIndex(editor);
+                bool success = false;
+
+                try
+                {
+                    // Generation is defined entirely by stored snapshots. The current
+                    // editor draft is never written into a TrackSlot. Use the selected
+                    // snapshot (or track 0) as deterministic base and preserve the draft
+                    // in ADOFAI Undo plus this failure rollback copy.
+                    try { editor.SaveState(true, true); } catch { }
+                    TrackStore.RestoreSnapshot(editor, store.Tracks[baseTrackIndex].Data, true);
+
+                    OrbitCommitResult orbitResult = MasterOutputGenerator.GenerateAndCommit(editor, lastPlan, lastPathPreview, store.Tracks, baseTrackIndex);
+                    TileDecorationResult tileResult = FixedTileDecorationGenerator.GenerateAndCommit(editor, store.Tracks, lastPlan);
+                    string previewFinish = TilePreviewPostProcessor.ApplyAndCommit(editor, store.Tracks, lastPlan);
+                    string compactFinish = CompactLayoutPostProcessor.ApplyAndCommit(editor, store.Tracks, lastPlan);
+                    store.DetachActive();
+                    pendingReplaceIndex = -1;
+                    status = "Generated from stored snapshots. " + orbitResult.Emitted + " Orbit action(s), " + tileResult.Created
+                        + " Floor decoration(s). " + previewFinish + " " + compactFinish
+                        + " Stored snapshots were not modified.";
+                    success = true;
+                }
+                finally
+                {
+                    if (!success)
+                    {
+                        TrackStore.RestoreSnapshot(editor, beforeGeneration, true);
+                        if (selectedFloor >= 0 && selectedFloor < editor.floors.Count)
+                            editor.SelectFloor(editor.floors[selectedFloor], true);
+                    }
+                }
             });
         }
 
@@ -315,6 +349,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             TrackSlot track = store != null && store.ActiveIndex >= 0 && store.ActiveIndex < store.Tracks.Count ? store.Tracks[store.ActiveIndex] : null;
             int value;
             double doubleValue;
+            int index;
 
             switch (actionId)
             {
@@ -325,49 +360,78 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     if (editor == null || store == null) return;
                     TryAction(delegate
                     {
-                        int index = store.StoreCurrent(editor, newTrackName);
+                        int created = store.StoreCurrent(editor, newTrackName);
                         newTrackName = "";
+                        pendingReplaceIndex = -1;
                         InvalidatePlan();
-                        status = "Stored " + store.Tracks[index].Name + " with Multi Tile start F" + store.Tracks[index].RegionStartFloor + ".";
+                        status = "Added immutable snapshot '" + store.Tracks[created].Name + "'. Further editor changes will not modify it.";
                     });
                     break;
                 case "save":
+                case "replace-request":
+                    if (store == null) return;
+                    index = store.ActiveIndex;
+                    if (!string.IsNullOrEmpty(argument)) int.TryParse(argument, NumberStyles.Integer, CultureInfo.InvariantCulture, out index);
+                    if (index < 0 || index >= store.Tracks.Count) return;
+                    pendingReplaceIndex = index;
+                    status = "Replace is armed for '" + store.Tracks[index].Name + "'. Confirm explicitly to overwrite that snapshot with the current editor contents.";
+                    break;
+                case "replace-cancel":
+                    pendingReplaceIndex = -1;
+                    status = "Snapshot replacement cancelled.";
+                    break;
+                case "replace-confirm":
                     if (editor == null || store == null) return;
-                    TryAction(delegate { store.SaveActive(editor); InvalidatePlan(); status = "Saved active track."; });
+                    if (!int.TryParse(argument, NumberStyles.Integer, CultureInfo.InvariantCulture, out index)) index = pendingReplaceIndex;
+                    if (index < 0 || index >= store.Tracks.Count || pendingReplaceIndex != index) return;
+                    TryAction(delegate
+                    {
+                        string name = store.Tracks[index].Name;
+                        store.ReplaceWithCurrent(editor, index);
+                        pendingReplaceIndex = -1;
+                        InvalidatePlan();
+                        status = "Replaced snapshot '" + name + "' with the current editor contents. The previous workspace state was added to recovery history.";
+                    });
                     break;
                 case "start":
                     if (editor == null || store == null) return;
-                    TryAction(delegate { store.SetActiveRegionStartFromSelection(editor); InvalidatePlan(); status = "Updated Multi Tile start floor."; });
+                    TryAction(delegate { store.SetActiveRegionStartFromSelection(editor); InvalidatePlan(); status = "Updated selected snapshot's Multi Tile start floor metadata."; });
                     break;
                 case "rename":
                     if (track == null) return;
                     track.Name = string.IsNullOrWhiteSpace(argument) ? track.Name : argument.Trim();
+                    store.PersistMetadata(editor);
                     InvalidatePlan();
                     break;
                 case "planet-a":
                     if (track == null) return;
                     track.PlanetATag = argument ?? "";
+                    store.PersistMetadata(editor);
                     InvalidatePlan();
                     break;
                 case "planet-b":
                     if (track == null) return;
                     track.PlanetBTag = argument ?? "";
+                    store.PersistMetadata(editor);
                     InvalidatePlan();
                     break;
                 case "pivot":
                     if (track == null) return;
                     track.PivotIsA = !track.PivotIsA;
+                    store.PersistMetadata(editor);
                     InvalidatePlan();
                     break;
                 case "wrap":
                     if (track == null || !int.TryParse(argument, out value)) return;
                     track.WrapMode = (CompactWrapMode)value;
+                    store.PersistMetadata(editor);
                     InvalidatePlan();
                     break;
                 case "wrap-tiles":
                     if (track == null) return;
                     track.WrapTilesText = argument ?? "";
                     if (int.TryParse(track.WrapTilesText, NumberStyles.Integer, CultureInfo.InvariantCulture, out value) && value > 0) track.WrapEveryTiles = value;
+                    store.PersistMetadata(editor);
                     InvalidatePlan();
                     break;
                 case "wrap-beats":
@@ -375,17 +439,20 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     track.WrapBeatsText = argument ?? "";
                     if (double.TryParse(track.WrapBeatsText, NumberStyles.Float, CultureInfo.InvariantCulture, out doubleValue)
                         && doubleValue > 0.0 && !double.IsNaN(doubleValue) && !double.IsInfinity(doubleValue)) track.WrapEveryBeats = doubleValue;
+                    store.PersistMetadata(editor);
                     InvalidatePlan();
                     break;
                 case "repeat-text":
                     if (track == null) return;
                     track.RepeatCountText = argument ?? "";
                     if (int.TryParse(track.RepeatCountText, NumberStyles.Integer, CultureInfo.InvariantCulture, out value) && value > 0) track.RepeatCount = value;
+                    store.PersistMetadata(editor);
                     InvalidatePlan();
                     break;
                 case "reuse":
                     if (track == null) return;
                     track.ReuseRepeatPath = argument == "1";
+                    store.PersistMetadata(editor);
                     InvalidatePlan();
                     break;
                 case "analyze-verify":
@@ -460,30 +527,50 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         public override WorkbenchPaneView BuildView()
         {
-            var view = new WorkbenchPaneView().Text(MteLocalization.T("tracks.heading", "MTE Tracks"), 16f, true).Spacer(6);
+            var view = new WorkbenchPaneView().Text(MteLocalization.T("tracks.heading", "MTE Tracks"), 16f, true).Spacer(4)
+                .Text(MteLocalization.T("tracks.immutableHelp", "Stored tracks are immutable snapshots. Selecting or loading one never writes editor changes back into it."), 9f, false)
+                .Spacer(6);
             if (!Snapshot.EditorAvailable)
                 return view.Text(MteLocalization.T("editor.open", "Open the ADOFAI level editor first."), 10f, false);
 
             view.BeginRow()
-                .Text(MteLocalization.T("tracks.new", "New track"), 10f, false)
+                .Text(MteLocalization.T("tracks.new", "New snapshot"), 10f, false)
                 .Input(Snapshot.NewTrackName, "new-name")
-                .Button(MteLocalization.T("tracks.store", "+ Store current"), "store", "", false, true)
+                .Button(MteLocalization.T("tracks.store", "+ Add current as new track"), "store", "", false, true)
                 .EndRow()
                 .Spacer(5);
 
             if (Snapshot.Tracks.Count == 0)
-                return view.Text(MteLocalization.T("tracks.empty", "No tracks yet. Select the Multi Tile start floor, then store the current chart."), 10f, false);
+                return view.Text(MteLocalization.T("tracks.empty", "No snapshots yet. Select the Multi Tile start floor, then add the current chart as a new track."), 10f, false);
 
             for (int i = 0; i < Snapshot.Tracks.Count; i++)
             {
                 TrackSnapshot track = Snapshot.Tracks[i];
-                bool active = track.Index == Snapshot.ActiveIndex;
+                bool selected = track.Index == Snapshot.ActiveIndex;
+                bool replacing = track.Index == Snapshot.PendingReplaceIndex;
                 string index = track.Index.ToString(CultureInfo.InvariantCulture);
+
                 view.BeginRow()
-                    .Button((active ? "> " : "") + track.Name, "switch", index, active, !active)
-                    .Button(MteLocalization.T("tracks.delete", "Delete"), "remove", index, false, true)
-                    .Text(MteLocalization.F("tracks.meta", "Start F{0}   Cursor F{1}   {2}", track.RegionStartFloor, track.CursorFloor, track.Layout), 9f, false)
+                    .Text((selected ? "> " : "") + track.Name, 11f, selected)
+                    .Button(MteLocalization.T("tracks.select", "Select settings"), "select", index, selected, !selected)
+                    .Button(MteLocalization.T("tracks.load", "Load copy"), "load", index, false, true);
+
+                if (!replacing)
+                {
+                    view.Button(MteLocalization.T("tracks.replace", "Replace with current"), "replace-request", index, false, true)
+                        .Button(MteLocalization.T("tracks.delete", "Delete"), "remove", index, false, true);
+                }
+                else
+                {
+                    view.Button(MteLocalization.T("tracks.replaceConfirm", "CONFIRM replace"), "replace-confirm", index, true, true)
+                        .Button(MteLocalization.T("tracks.replaceCancel", "Cancel"), "replace-cancel", index, false, true);
+                }
+
+                view.Text(MteLocalization.F("tracks.meta", "Start F{0}   Cursor F{1}   {2}", track.RegionStartFloor, track.CursorFloor, track.Layout), 9f, false)
                     .EndRow();
+
+                if (replacing)
+                    view.Text(MteLocalization.T("tracks.replaceWarning", "This is the only normal action that overwrites a stored snapshot. The previous workspace state is kept in recovery history."), 9f, true);
             }
             return view;
         }
@@ -493,20 +580,43 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             scnEditor editor = ADOBase.editor;
             TrackStore store = TrackStore.Current;
             int index;
-            if (actionId == "switch" && editor != null && store != null && int.TryParse(argument, out index))
+
+            if (actionId == "select" && store != null && int.TryParse(argument, NumberStyles.Integer, CultureInfo.InvariantCulture, out index))
             {
-                try { store.SwitchTo(editor, index); WorkbenchIntegration.ResetGenerationState("Switched source track."); }
+                try
+                {
+                    store.Select(index);
+                    WorkbenchIntegration.ResetGenerationState("Selected snapshot settings. ADOFAI editor contents were not changed.");
+                }
                 catch { }
                 FinishAction();
                 return;
             }
-            if (actionId == "remove" && editor != null && store != null && int.TryParse(argument, out index))
+
+            if (actionId == "load" && editor != null && store != null && int.TryParse(argument, NumberStyles.Integer, CultureInfo.InvariantCulture, out index))
             {
-                try { store.Remove(editor, index); WorkbenchIntegration.ResetGenerationState("Removed track."); }
+                try
+                {
+                    store.LoadCopy(editor, index);
+                    WorkbenchIntegration.ResetGenerationState("Loaded a COPY of the saved snapshot into ADOFAI. Editing it will not modify the stored snapshot.");
+                }
                 catch { }
                 FinishAction();
                 return;
             }
+
+            if (actionId == "remove" && editor != null && store != null && int.TryParse(argument, NumberStyles.Integer, CultureInfo.InvariantCulture, out index))
+            {
+                try
+                {
+                    store.Remove(editor, index);
+                    WorkbenchIntegration.ResetGenerationState("Removed stored snapshot. The previous workspace state was added to recovery history.");
+                }
+                catch { }
+                FinishAction();
+                return;
+            }
+
             WorkbenchIntegration.HandlePaneAction(actionId, argument);
         }
     }
@@ -526,7 +636,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             if (Snapshot.ActiveIndex >= 0)
             {
-                view.Text(MteLocalization.T("activeSource", "Active source"), 11f, true)
+                string selectedIndex = Snapshot.ActiveIndex.ToString(CultureInfo.InvariantCulture);
+                bool replacing = Snapshot.PendingReplaceIndex == Snapshot.ActiveIndex;
+
+                view.Text(MteLocalization.T("activeSource", "Selected snapshot"), 11f, true)
+                    .Text(MteLocalization.T("settings.selectionHelp", "These controls edit MTE metadata for the saved snapshot. They do not bind the live ADOFAI editor to it."), 9f, false)
                     .BeginRow()
                     .Text(MteLocalization.T("track", "Track"), 10f, false)
                     .Input(Snapshot.ActiveName, "rename")
@@ -539,10 +653,19 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     .Button(MteLocalization.F("initialPivot", "Initial pivot: {0}", Snapshot.PivotIsA ? "A" : "B"), "pivot", "", true, true)
                     .EndRow()
                     .BeginRow()
-                    .Button(MteLocalization.T("saveTrack", "Save track"), "save", "", false, true)
-                    .Button(MteLocalization.T("setStart", "Set start from selection"), "start", "", false, true)
-                    .EndRow()
-                    .Spacer(8)
+                    .Button(MteLocalization.T("setStart", "Set start from selection"), "start", "", false, true);
+
+                if (!replacing)
+                    view.Button(MteLocalization.T("saveTrack", "Replace snapshot with current"), "replace-request", selectedIndex, false, true);
+                else
+                    view.Button(MteLocalization.T("tracks.replaceConfirm", "CONFIRM replace"), "replace-confirm", selectedIndex, true, true)
+                        .Button(MteLocalization.T("tracks.replaceCancel", "Cancel"), "replace-cancel", selectedIndex, false, true);
+
+                view.EndRow();
+                if (replacing)
+                    view.Text(MteLocalization.T("tracks.replaceWarning", "This is the only normal action that overwrites a stored snapshot. The previous workspace state is kept in recovery history."), 9f, true);
+
+                view.Spacer(8)
                     .Text(MteLocalization.T("layout", "Layout"), 11f, true)
                     .BeginRow()
                     .Button(MteLocalization.T("off", "Off"), "wrap", ((int)CompactWrapMode.Off).ToString(), Snapshot.WrapMode == CompactWrapMode.Off, true)
@@ -572,14 +695,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
             else if (Snapshot.Tracks.Count > 0)
             {
-                view.Text(MteLocalization.T("detached", "Generated output is detached. Choose a track in MTE Tracks to continue editing a source track."), 10f, false).Spacer(8);
+                view.Text(MteLocalization.T("detached", "No snapshot is selected. Select one in MTE Tracks to edit its MTE settings; loading it into ADOFAI is optional."), 10f, false).Spacer(8);
             }
             else
             {
-                view.Text(MteLocalization.T("chooseStart", "Choose the Multi Tile start floor, then store the current chart in MTE Tracks."), 10f, false).Spacer(8);
+                view.Text(MteLocalization.T("chooseStart", "Choose the Multi Tile start floor, then add the current chart as a new MTE snapshot."), 10f, false).Spacer(8);
             }
 
             view.Text(MteLocalization.T("generation", "Generation"), 11f, true)
+                .Text(MteLocalization.T("generation.snapshotHelp", "Analyze and Generate read only the stored snapshots. They never auto-save the live editor into a track."), 9f, false)
                 .BeginRow()
                 .Text(Snapshot.GenerationState, 10f, true)
                 .Button(MteLocalization.T("analyzeVerify", "Analyze + Verify"), "analyze-verify", "", false, Snapshot.CanAnalyze)
@@ -624,6 +748,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
     {
         internal bool EditorAvailable;
         internal int ActiveIndex = -1;
+        internal int PendingReplaceIndex = -1;
         internal readonly List<TrackSnapshot> Tracks = new List<TrackSnapshot>();
         internal string NewTrackName = "";
         internal string ActiveName = "";
@@ -656,7 +781,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             var parts = new List<string>
             {
-                EditorAvailable ? "1" : "0", ActiveIndex.ToString(), NewTrackName ?? "", ActiveName ?? "",
+                EditorAvailable ? "1" : "0", ActiveIndex.ToString(), PendingReplaceIndex.ToString(), NewTrackName ?? "", ActiveName ?? "",
                 RegionStartFloor.ToString(), CursorFloor.ToString(), PivotIsA ? "A" : "B", ((int)WrapMode).ToString(),
                 WrapTilesText ?? "", WrapBeatsText ?? "", RepeatCountText ?? "", RepeatCount.ToString(),
                 ReuseRepeatPath ? "1" : "0", PlanetATag ?? "", PlanetBTag ?? "", AngleText ?? "", AngleCountText ?? "",
