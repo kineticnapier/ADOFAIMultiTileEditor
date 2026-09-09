@@ -34,6 +34,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         {
             if (!value && ADOBase.editor != null) store.FlushAutosave(ADOBase.editor);
             enabled = value;
+            Pacl2VanillaCompatibility.SetEnabled(value);
             EnsureOverlay();
             if (overlay != null) overlay.enabled = value;
             return true;
@@ -42,6 +43,10 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private static void OnUpdate(UnityModManager.ModEntry entry, float deltaTime)
         {
             if (!enabled) return;
+
+            // PACL2 can be loaded after MTE depending on UMM ordering, so retry until
+            // the stock/known-patched build has been classified.
+            Pacl2VanillaCompatibility.Tick();
 
             scnEditor editor = ADOBase.editor;
             bool editorChanged = editor != lastEditor;
