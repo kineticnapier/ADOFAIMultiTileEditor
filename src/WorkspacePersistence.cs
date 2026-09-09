@@ -13,14 +13,21 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private const string Magic = "ADOFAI-MTE-WORKSPACE";
         private const int FormatVersion = 2;
         private const int OldestSupportedFormatVersion = 1;
-        private const int BackupGenerations = 6;
+        private const int BackupGenerations = 12;
 
         internal static bool CanPersist(scnEditor editor)
         {
             return !string.IsNullOrWhiteSpace(GetChartPath(editor));
         }
 
-        internal static void Save(scnEditor editor, IList<TrackSlot> tracks, int nextAutoTagId)
+        // rotateHistory is intentionally false for ordinary metadata/autosave writes.
+        // Immutable TrackSlot.Data snapshots only advance historical generations on
+        // explicit snapshot-set changes (add / replace / delete).
+        internal static void Save(
+            scnEditor editor,
+            IList<TrackSlot> tracks,
+            int nextAutoTagId,
+            bool rotateHistory = false)
         {
             string chartPath = GetChartPath(editor);
             if (string.IsNullOrWhiteSpace(chartPath) || tracks == null || tracks.Count == 0) return;
@@ -31,84 +38,128 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             try
             {
-                using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
-                using (var writer = new BinaryWriter(stream, Encoding.UTF8))
+                WriteWorkspace(temp, chartPath, tracks, nextAutoTagId);
+
+                // A periodic autosave of an unchanged immutable snapshot set must not
+                // consume recovery generations.
+                if (File.Exists(path) && FilesEquivalent(path, temp)) return;
+
+                if (!File.Exists(path))
                 {
-                    writer.Write(Magic);
-                    writer.Write(FormatVersion);
-                    writer.Write(NormalizePath(chartPath));
-                    writer.Write(Math.Max(1, nextAutoTagId));
-                    writer.Write(tracks.Count);
-
-                    for (int i = 0; i < tracks.Count; i++)
-                    {
-                        TrackSlot track = tracks[i];
-                        if (track == null || track.Data == null)
-                            throw new InvalidOperationException("MTE workspace contains an empty track at index " + i + ".");
-
-                        writer.Write(track.Name ?? string.Empty);
-                        writer.Write(track.CursorFloor);
-                        writer.Write(track.RegionStartFloor);
-                        writer.Write(track.PlanetATag ?? string.Empty);
-                        writer.Write(track.PlanetBTag ?? string.Empty);
-                        writer.Write(track.PivotIsA);
-                        writer.Write((int)track.WrapMode);
-                        writer.Write(track.WrapEveryTiles);
-                        writer.Write(track.WrapEveryBeats);
-                        writer.Write(track.RepeatCount);
-                        writer.Write(track.ReuseRepeatPath);
-                        writer.Write(track.WrapTilesText ?? string.Empty);
-                        writer.Write(track.WrapBeatsText ?? string.Empty);
-                        writer.Write(track.RepeatCountText ?? string.Empty);
-                        writer.Write(track.LayoutOffsetX);
-                        writer.Write(track.LayoutOffsetY);
-                        writer.Write(track.AppliedLayoutOffsetX);
-                        writer.Write(track.AppliedLayoutOffsetY);
-                        writer.Write(track.LayoutOffsetXText ?? string.Empty);
-                        writer.Write(track.LayoutOffsetYText ?? string.Empty);
-
-                        // v2 paging metadata. Workspace format is intentionally independent
-                        // from the mod version so normal upgrades never invalidate source data.
-                        writer.Write(track.DynamicPagingEnabled);
-                        writer.Write(Math.Max(2, track.PageTiles));
-                        writer.Write(track.PageTilesText ?? "64");
-
-                        writer.Write(track.Data.Encode() ?? string.Empty);
-                    }
-                    writer.Flush();
-                    stream.Flush(true);
+                    File.Move(temp, path);
+                    return;
                 }
 
-                // Never destroy the only known-good copy while installing a new autosave.
-                // Keep several historical generations because a logically bad but readable
-                // autosave must not overwrite the sole .bak on the next tick.
-                if (File.Exists(path))
+                if (rotateHistory)
                 {
                     RotateBackups(path);
                     File.Copy(path, BackupPath(path, 0), true);
-
-                    bool replaced = false;
-                    try
-                    {
-                        File.Replace(temp, path, null, true);
-                        replaced = true;
-                    }
-                    catch { }
-
-                    if (!replaced)
-                    {
-                        File.Delete(path);
-                        File.Move(temp, path);
-                    }
                 }
-                else
+
+                bool replaced = false;
+                try
                 {
+                    File.Replace(temp, path, null, true);
+                    replaced = true;
+                }
+                catch { }
+
+                if (!replaced)
+                {
+                    File.Delete(path);
                     File.Move(temp, path);
                 }
             }
             finally
             {
                 try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+            }
+        }
+
+        private static void WriteWorkspace(
+            string path,
+            string chartPath,
+            IList<TrackSlot> tracks,
+            int nextAutoTagId)
+        {
+            using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (var writer = new BinaryWriter(stream, Encoding.UTF8))
+            {
+                writer.Write(Magic);
+                writer.Write(FormatVersion);
+                writer.Write(NormalizePath(chartPath));
+                writer.Write(Math.Max(1, nextAutoTagId));
+                writer.Write(tracks.Count);
+
+                for (int i = 0; i < tracks.Count; i++)
+                {
+                    TrackSlot track = tracks[i];
+                    if (track == null || track.Data == null)
+                        throw new InvalidOperationException("MTE workspace contains an empty track at index " + i + ".");
+
+                    writer.Write(track.Name ?? string.Empty);
+                    writer.Write(track.CursorFloor);
+                    writer.Write(track.RegionStartFloor);
+                    writer.Write(track.PlanetATag ?? string.Empty);
+                    writer.Write(track.PlanetBTag ?? string.Empty);
+                    writer.Write(track.PivotIsA);
+                    writer.Write((int)track.WrapMode);
+                    writer.Write(track.WrapEveryTiles);
+                    writer.Write(track.WrapEveryBeats);
+                    writer.Write(track.RepeatCount);
+                    writer.Write(track.ReuseRepeatPath);
+                    writer.Write(track.WrapTilesText ?? string.Empty);
+                    writer.Write(track.WrapBeatsText ?? string.Empty);
+                    writer.Write(track.RepeatCountText ?? string.Empty);
+                    writer.Write(track.LayoutOffsetX);
+                    writer.Write(track.LayoutOffsetY);
+                    writer.Write(track.AppliedLayoutOffsetX);
+                    writer.Write(track.AppliedLayoutOffsetY);
+                    writer.Write(track.LayoutOffsetXText ?? string.Empty);
+                    writer.Write(track.LayoutOffsetYText ?? string.Empty);
+
+                    // v2 paging metadata is retained even while the experimental paging
+                    // UI is disabled, so opening 0.17 workspaces never discards anything.
+                    writer.Write(track.DynamicPagingEnabled);
+                    writer.Write(Math.Max(2, track.PageTiles));
+                    writer.Write(track.PageTilesText ?? "64");
+
+                    writer.Write(track.Data.Encode() ?? string.Empty);
+                }
+                writer.Flush();
+                stream.Flush(true);
+            }
+        }
+
+        private static bool FilesEquivalent(string a, string b)
+        {
+            try
+            {
+                var fa = new FileInfo(a);
+                var fb = new FileInfo(b);
+                if (fa.Length != fb.Length) return false;
+
+                const int BufferSize = 64 * 1024;
+                byte[] ba = new byte[BufferSize];
+                byte[] bb = new byte[BufferSize];
+                using (var sa = new FileStream(a, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var sb = new FileStream(b, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    while (true)
+                    {
+                        int ra = sa.Read(ba, 0, ba.Length);
+                        int rb = sb.Read(bb, 0, bb.Length);
+                        if (ra != rb) return false;
+                        if (ra == 0) return true;
+                        for (int i = 0; i < ra; i++)
+                            if (ba[i] != bb[i]) return false;
+                    }
+                }
+            }
+            catch
+            {
+                // Failure to compare is not a reason to skip a real save.
+                return false;
             }
         }
 
@@ -180,8 +231,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
             catch
             {
-                // Backup rotation failure must never prevent the current primary from
-                // being copied to .bak before replacement.
+                // Backup rotation failure must never prevent the newest good primary
+                // from being copied to .bak before an explicit destructive operation.
             }
         }
 
