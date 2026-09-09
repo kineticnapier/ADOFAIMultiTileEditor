@@ -26,6 +26,7 @@
     <Reference Include="UnityEngine.UIModule"><HintPath>$(GameManagedDir)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(GameManagedDir)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityModManager"><HintPath>$(UmmDir)\UnityModManager.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(UmmDir)\0Harmony.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="ADOFAI.EditorToolkit"><HintPath>$(EditorToolkitCoreDll)</HintPath><Private>true</Private></Reference>
     <Reference Include="ADOFAI.EditorToolkit.ADOFAI"><HintPath>$(EditorToolkitGameDll)</HintPath><Private>true</Private></Reference>
     <Reference Include="ADOFAIWorkbench"><HintPath>$(WorkbenchDll)</HintPath><Private>false</Private></Reference>
@@ -42,6 +43,7 @@
     <Compile Include="ChartSessionGuard.cs" />
     <Compile Include="WorkspacePersistence.cs" />
     <Compile Include="WorkspaceDeletion.cs" />
+    <Compile Include="Pacl2VanillaCompatibility.cs" />
     <Compile Include="GeneratedLayoutMover.cs" />
     <Compile Include="GeneratedLayoutPane.cs" />
     <Compile Include="DynamicPagedLayoutPostProcessor.cs" />
