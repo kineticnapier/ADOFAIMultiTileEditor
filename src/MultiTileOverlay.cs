@@ -18,7 +18,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 {
                     WorkbenchIntegration.EnsureRegistered();
                     GeneratedLayoutPaneRegistration.EnsureRegistered();
-                    DynamicPagingPaneRegistration.EnsureRegistered();
                 }
                 else
                 {
@@ -39,7 +38,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (!visible) return;
             WorkbenchIntegration.EnsureRegistered();
             GeneratedLayoutPaneRegistration.EnsureRegistered();
-            DynamicPagingPaneRegistration.EnsureRegistered();
+
+            // 0.17.1 safety rollback: keep the paging implementation and persisted
+            // settings for later recovery/testing, but do not expose or execute it until
+            // its output mutation path has been validated against real charts.
+            DynamicPagingPaneRegistration.Unregister();
         }
 
         private void OnDisable()
@@ -69,10 +72,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             WorkbenchIntegration.EnsureRegistered();
             GeneratedLayoutPaneRegistration.EnsureRegistered();
-            DynamicPagingPaneRegistration.EnsureRegistered();
+            DynamicPagingPaneRegistration.Unregister();
             WorkbenchIntegration.Tick();
             GeneratedLayoutPaneRegistration.Tick();
-            DynamicPagingPaneRegistration.Tick();
 
             bool editorAvailable = ADOBase.editor != null;
             if (editorAvailable && !editorWasAvailable)
