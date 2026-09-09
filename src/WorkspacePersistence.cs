@@ -13,6 +13,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private const string Magic = "ADOFAI-MTE-WORKSPACE";
         private const int FormatVersion = 2;
         private const int OldestSupportedFormatVersion = 1;
+        private const int BackupGenerations = 6;
 
         internal static bool CanPersist(scnEditor editor)
         {
@@ -22,10 +23,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         internal static void Save(scnEditor editor, IList<TrackSlot> tracks, int nextAutoTagId)
         {
             string chartPath = GetChartPath(editor);
-            if (string.IsNullOrWhiteSpace(chartPath) || tracks == null) return;
+            if (string.IsNullOrWhiteSpace(chartPath) || tracks == null || tracks.Count == 0) return;
 
             string path = GetWorkspacePath(chartPath);
-            string backup = path + ".bak";
             string temp = path + ".tmp";
             Directory.CreateDirectory(Path.GetDirectoryName(path));
 
@@ -67,9 +67,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                         writer.Write(track.LayoutOffsetXText ?? string.Empty);
                         writer.Write(track.LayoutOffsetYText ?? string.Empty);
 
-                        // v2: dynamic paging settings. Keeping this behind an explicit
-                        // workspace format version lets future mod versions migrate the
-                        // autosave instead of discarding in-progress source snapshots.
+                        // v2 paging metadata. Workspace format is intentionally independent
+                        // from the mod version so normal upgrades never invalidate source data.
                         writer.Write(track.DynamicPagingEnabled);
                         writer.Write(Math.Max(2, track.PageTiles));
                         writer.Write(track.PageTilesText ?? "64");
@@ -80,13 +79,32 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     stream.Flush(true);
                 }
 
+                // Never destroy the only known-good copy while installing a new autosave.
+                // Keep several historical generations because a logically bad but readable
+                // autosave must not overwrite the sole .bak on the next tick.
                 if (File.Exists(path))
                 {
-                    try { File.Copy(path, backup, true); }
+                    RotateBackups(path);
+                    File.Copy(path, BackupPath(path, 0), true);
+
+                    bool replaced = false;
+                    try
+                    {
+                        File.Replace(temp, path, null, true);
+                        replaced = true;
+                    }
                     catch { }
-                    File.Delete(path);
+
+                    if (!replaced)
+                    {
+                        File.Delete(path);
+                        File.Move(temp, path);
+                    }
                 }
-                File.Move(temp, path);
+                else
+                {
+                    File.Move(temp, path);
+                }
             }
             finally
             {
@@ -104,43 +122,73 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (string.IsNullOrWhiteSpace(chartPath)) return false;
 
             string path = GetWorkspacePath(chartPath);
-            Exception primaryError = null;
-            if (File.Exists(path))
+            Exception firstError = null;
+
+            // Primary first, then newest -> oldest historical backups. A readable zero-track
+            // file is treated as suspicious rather than masking older recoverable work.
+            for (int candidate = -1; candidate < BackupGenerations; candidate++)
             {
+                string candidatePath = candidate < 0 ? path : BackupPath(path, candidate);
+                if (!File.Exists(candidatePath)) continue;
+
                 try
                 {
+                    var loaded = new List<TrackSlot>();
+                    int loadedNextTag;
                     int loadedVersion;
-                    LoadFile(path, chartPath, tracks, out nextAutoTagId, out loadedVersion);
-                    message = "Recovered " + tracks.Count + " MTE track(s) from autosave."
-                        + (loadedVersion < FormatVersion ? " Workspace format migrated from v" + loadedVersion + " to v" + FormatVersion + "." : string.Empty);
-                    return tracks.Count > 0;
+                    LoadFile(candidatePath, chartPath, loaded, out loadedNextTag, out loadedVersion);
+                    if (loaded.Count == 0)
+                    {
+                        if (firstError == null)
+                            firstError = new InvalidDataException("Autosave contained zero tracks.");
+                        continue;
+                    }
+
+                    tracks = loaded;
+                    nextAutoTagId = loadedNextTag;
+                    string source = candidate < 0
+                        ? "autosave"
+                        : (candidate == 0 ? "backup autosave" : "backup autosave generation " + (candidate + 1));
+                    message = "Recovered " + tracks.Count + " MTE track(s) from " + source + "."
+                        + (candidate >= 0 ? " A newer workspace copy was unavailable or unusable." : string.Empty)
+                        + (loadedVersion < FormatVersion
+                            ? " Workspace format migrated from v" + loadedVersion + " to v" + FormatVersion + "."
+                            : string.Empty);
+                    return true;
                 }
                 catch (Exception ex)
                 {
-                    primaryError = ex;
-                    tracks.Clear();
-                    nextAutoTagId = 1;
+                    if (firstError == null) firstError = ex;
                 }
             }
 
-            string backup = path + ".bak";
-            if (File.Exists(backup))
-            {
-                try
-                {
-                    int loadedVersion;
-                    LoadFile(backup, chartPath, tracks, out nextAutoTagId, out loadedVersion);
-                    message = "Recovered " + tracks.Count + " MTE track(s) from backup autosave."
-                        + (primaryError != null ? " Primary autosave was unreadable." : string.Empty)
-                        + (loadedVersion < FormatVersion ? " Workspace format migrated from v" + loadedVersion + " to v" + FormatVersion + "." : string.Empty);
-                    return tracks.Count > 0;
-                }
-                catch { }
-            }
-
-            if (primaryError != null)
-                message = "MTE autosave exists but could not be read: " + primaryError.Message;
+            if (firstError != null)
+                message = "MTE autosave copies exist but none could be read: " + firstError.Message;
             return false;
+        }
+
+        private static void RotateBackups(string primaryPath)
+        {
+            try
+            {
+                for (int i = BackupGenerations - 1; i >= 1; i--)
+                {
+                    string source = BackupPath(primaryPath, i - 1);
+                    string destination = BackupPath(primaryPath, i);
+                    if (File.Exists(source)) File.Copy(source, destination, true);
+                }
+            }
+            catch
+            {
+                // Backup rotation failure must never prevent the current primary from
+                // being copied to .bak before replacement.
+            }
+        }
+
+        private static string BackupPath(string primaryPath, int generation)
+        {
+            if (generation <= 0) return primaryPath + ".bak";
+            return primaryPath + ".bak." + generation;
         }
 
         private static void LoadFile(
