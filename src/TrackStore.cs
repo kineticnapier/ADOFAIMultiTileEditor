@@ -135,8 +135,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
         internal void DetachActive()
         {
-            // Generated output is not a source snapshot. Keeping selection would be
-            // misleading, but this does not alter any stored TrackSlot.Data.
             activeIndex = -1;
         }
 
@@ -156,7 +154,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
             nextAutoTagId = Math.Max(1, restoredNextTag);
 
-            // Restoring a workspace never applies a snapshot to the editor.
+            // Restoring a workspace never applies or selects a snapshot.
             activeIndex = -1;
             TrackSlot.ReplaceRegistration(tracks);
             ChartSessionGuard.AcceptCurrent(editor);
@@ -232,12 +230,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             slot.Angles = GameAngleProbe.Capture(editor);
             slot.PreviewPositions = GameAngleProbe.CapturePositions(editor);
             tracks.Add(slot);
-            activeIndex = tracks.Count - 1;
+            int createdIndex = tracks.Count - 1;
             ClampFloors(slot);
             TrackSlot.ReplaceRegistration(tracks);
             ChartSessionGuard.AcceptCurrent(editor);
             PersistSnapshotMutation(editor);
-            return activeIndex;
+
+            // Adding a snapshot does not mean the live editor is now "editing" it.
+            activeIndex = -1;
+            return createdIndex;
         }
 
         internal void Select(int index)
@@ -253,16 +254,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (index < 0 || index >= tracks.Count) throw new ArgumentOutOfRangeException("index");
             ChartSessionGuard.EnsureCurrent(editor);
 
-            // Make ADOFAI Undo useful when a user loads a saved source over an editor draft.
             try { editor.SaveState(true, true); } catch { }
             RestoreSnapshot(editor, tracks[index].Data, true);
-            activeIndex = index;
 
             int floor = tracks[index].CursorFloor;
             if (floor >= 0 && floor < editor.floors.Count)
                 editor.SelectFloor(editor.floors[floor], true);
             TrackSlot.ReplaceRegistration(tracks);
             ChartSessionGuard.AcceptCurrent(editor);
+
+            // Loading and selecting are deliberately orthogonal operations.
         }
 
         // Compatibility entry point for older pane code. It now means load-copy only;
@@ -292,22 +293,22 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (index < 0 || index >= tracks.Count) throw new ArgumentOutOfRangeException("index");
             ChartSessionGuard.EnsureCurrent(editor);
 
-            // Ensure the old immutable collection is installed as primary before the
-            // destructive mutation; the following history-rotating save then preserves it.
+            // Install the old collection as primary first. The history-rotating save
+            // after mutation then preserves it as a recovery generation.
             WorkspacePersistence.Save(editor, tracks, nextAutoTagId, false);
 
             TrackSlot track = tracks[index];
             track.Data = editor.levelData.Copy();
             track.Angles = GameAngleProbe.Capture(editor);
             track.PreviewPositions = GameAngleProbe.CapturePositions(editor);
-            int selected = GameAngleProbe.TryGetCurrentFloorIndex(editor);
-            if (selected >= 0) track.CursorFloor = selected;
+            int cursor = GameAngleProbe.TryGetCurrentFloorIndex(editor);
+            if (cursor >= 0) track.CursorFloor = cursor;
             ClampFloors(track);
-            activeIndex = index;
             TrackSlot.ReplaceRegistration(tracks);
             ChartSessionGuard.AcceptCurrent(editor);
 
             PersistSnapshotMutation(editor);
+            // Replacement also does not bind the live editor to this snapshot.
         }
 
         internal void SetActiveRegionStartFromSelection(scnEditor editor)
@@ -330,7 +331,6 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (index < 0 || index >= tracks.Count) return;
             if (tracks.Count > 0) ChartSessionGuard.EnsureCurrent(editor);
 
-            // Preserve the collection containing the soon-to-be-deleted snapshot.
             WorkspacePersistence.Save(editor, tracks, nextAutoTagId, false);
             tracks.RemoveAt(index);
 
@@ -338,6 +338,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 activeIndex = -1;
                 TrackSlot.ReplaceRegistration(tracks);
+                WorkspacePersistence.DeletePrimaryWithHistory(editor);
                 ChartSessionGuard.AcceptCurrent(editor);
                 return;
             }
