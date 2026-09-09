@@ -41,6 +41,7 @@
     <Compile Include="MteLocalization.cs" />
     <Compile Include="ChartSessionGuard.cs" />
     <Compile Include="WorkspacePersistence.cs" />
+    <Compile Include="WorkspaceDeletion.cs" />
     <Compile Include="GeneratedLayoutMover.cs" />
     <Compile Include="GeneratedLayoutPane.cs" />
     <Compile Include="DynamicPagedLayoutPostProcessor.cs" />
