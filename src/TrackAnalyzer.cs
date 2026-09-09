@@ -14,6 +14,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
         private const double TimeConsistencyRelative = 2.0e-4;
         private const double MinBpm = 1.0e-5;
         private const double PrefixAngleTolerance = 0.001;
+        private const double FastVisualSnapThresholdSeconds = 0.05;
 
         internal static GenerationPlan BuildPlan(scnEditor editor, IList<TrackSlot> tracks)
         {
@@ -55,10 +56,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             plan.RegionInheritedIsCCW = analyzed[0].RegionInheritedIsCCW;
             plan.StartSeconds = analyzed[0].StartSeconds;
             plan.EndSeconds = analyzed[0].EndSeconds;
+            int instantVisuals = CountInstantVisualSegments(analyzed);
             plan.Diagnostic = plan.Diagnostic.TrimEnd('.')
                 + "; region starts at F" + plan.RegionStartFloor
                 + "; constant master BPM " + masterBpm.ToString("0.######", CultureInfo.InvariantCulture)
-                + " (source SetSpeed maps baked into region-relative real time).";
+                + " (source SetSpeed maps baked into region-relative real time; Pause is retained as stationary delay before each orbit, including terminal-floor wait time)"
+                + (instantVisuals > 0
+                    ? "; " + instantVisuals + " ultra-fast visual segment(s) use deterministic snap fallback at <= "
+                        + (FastVisualSnapThresholdSeconds * 1000.0).ToString("0", CultureInfo.InvariantCulture) + " ms"
+                    : "")
+                + ".";
             return plan;
         }
 
@@ -140,8 +147,12 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 if (!(effectiveBpm > MinBpm) || double.IsNaN(effectiveBpm) || double.IsInfinity(effectiveBpm))
                     throw new InvalidOperationException("Track '" + slot.Name + "' has an invalid effective BPM near source floor " + chosen.FloorId + ".");
 
-                double durationSeconds = sourceDurationBeats * 60.0 / effectiveBpm;
+                double motionDurationSeconds = sourceDurationBeats * 60.0 / effectiveBpm;
+                double pauseSourceBeats = Math.Max(0.0, ReadDouble(startFloor, "extraBeats", 0.0));
+                double pauseSeconds = pauseSourceBeats * 60.0 / effectiveBpm;
                 string source = chosen.Source + " + BPM*speed timing";
+                if (pauseSourceBeats > TimelineMerger.BeatEpsilon)
+                    source += " + Pause/extraBeats=" + pauseSourceBeats.ToString("0.######", CultureInfo.InvariantCulture);
 
                 double runtimeStartTime;
                 double runtimeEndTime;
@@ -150,11 +161,37 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     && runtimeEndTime - runtimeStartTime > 1.0e-9)
                 {
                     double runtimeSeconds = runtimeEndTime - runtimeStartTime;
-                    double tolerance = Math.Max(TimeConsistencyAbsoluteSeconds, durationSeconds * TimeConsistencyRelative);
-                    if (Math.Abs(runtimeSeconds - durationSeconds) > tolerance)
+                    double expectedSeconds = motionDurationSeconds + pauseSeconds;
+                    double tolerance = Math.Max(TimeConsistencyAbsoluteSeconds, Math.Max(runtimeSeconds, expectedSeconds) * TimeConsistencyRelative);
+
+                    if (pauseSourceBeats > TimelineMerger.BeatEpsilon)
                     {
-                        durationSeconds = runtimeSeconds;
-                        effectiveBpm = sourceDurationBeats * 60.0 / durationSeconds;
+                        if (Math.Abs(runtimeSeconds - expectedSeconds) <= tolerance)
+                        {
+                            source += " + entryTime pause check";
+                        }
+                        else if (runtimeSeconds + tolerance >= motionDurationSeconds)
+                        {
+                            // Keep the actual orbital speed. Any additional runtime time is
+                            // stationary time at the landed tile, rather than slowing the orbit.
+                            pauseSeconds = Math.Max(0.0, runtimeSeconds - motionDurationSeconds);
+                            source += " + entryTime stationary-delay override";
+                        }
+                        else
+                        {
+                            // An inconsistent runtime shorter than the physical motion cannot
+                            // contain the requested pause. Fall back to the historical timing
+                            // normalization rather than creating negative wait time.
+                            pauseSeconds = 0.0;
+                            motionDurationSeconds = runtimeSeconds;
+                            effectiveBpm = sourceDurationBeats * 60.0 / motionDurationSeconds;
+                            source += " + entryTime motion override";
+                        }
+                    }
+                    else if (Math.Abs(runtimeSeconds - motionDurationSeconds) > tolerance)
+                    {
+                        motionDurationSeconds = runtimeSeconds;
+                        effectiveBpm = sourceDurationBeats * 60.0 / motionDurationSeconds;
                         source += " + entryTime override";
                     }
                     else source += " + entryTime check";
@@ -168,8 +205,9 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     && runtimeEndBeat - runtimeStartBeat > TimelineMerger.BeatEpsilon)
                 {
                     double runtimeMagnitude = (runtimeEndBeat - runtimeStartBeat) * 180.0;
-                    double tolerance = Math.Max(AngleConsistencyAbsoluteDegrees, chosen.MagnitudeDegrees * AngleConsistencyRelative);
-                    if (Math.Abs(runtimeMagnitude - chosen.MagnitudeDegrees) > tolerance)
+                    double expectedMagnitude = chosen.MagnitudeDegrees + pauseSourceBeats * 180.0;
+                    double tolerance = Math.Max(AngleConsistencyAbsoluteDegrees, expectedMagnitude * AngleConsistencyRelative);
+                    if (Math.Abs(runtimeMagnitude - expectedMagnitude) > tolerance && pauseSourceBeats <= TimelineMerger.BeatEpsilon)
                     {
                         throw new InvalidOperationException(
                             "Track '" + slot.Name + "' reconstructed timing/angle mismatch near source floor " + chosen.FloorId
@@ -179,6 +217,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     }
                 }
 
+                bool useInstantVisualSnap = motionDurationSeconds <= FastVisualSnapThresholdSeconds + 1.0e-9;
+                if (useInstantVisualSnap)
+                    source += " + instant visual snap (" + (motionDurationSeconds * 1000.0).ToString("0.###", CultureInfo.InvariantCulture) + " ms)";
+
+                double durationSeconds = pauseSeconds + motionDurationSeconds;
                 double startSeconds = cursorSeconds;
                 double endSeconds = startSeconds + durationSeconds;
                 string moving = pivotIsA ? result.PlanetBTag : result.PlanetATag;
@@ -193,8 +236,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     StartSeconds = startSeconds,
                     EndSeconds = endSeconds,
                     DurationSeconds = durationSeconds,
+                    PauseSeconds = pauseSeconds,
+                    MotionDurationSeconds = motionDurationSeconds,
                     SourceDurationBeats = sourceDurationBeats,
                     EffectiveBpm = effectiveBpm,
+                    UseInstantVisualSnap = useInstantVisualSnap,
                     AmountDegrees = amount,
                     AngleSource = source,
                     MovingTag = moving,
@@ -205,7 +251,23 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 pivotIsA = !pivotIsA;
             }
 
-            result.EndSeconds = cursorSeconds;
+            // Pause belongs to the landed floor. Every non-terminal floor is handled
+            // above as the stationary prefix of its following segment. The final
+            // landable floor has no following segment, so older builds never read its
+            // extraBeats at all. Preserve it as a terminal stationary interval.
+            object terminalFloor = floors[floors.Count - 1];
+            double terminalPauseSourceBeats = Math.Max(0.0, ReadDouble(terminalFloor, "extraBeats", 0.0));
+            result.TerminalFloor = ReadFloorId(terminalFloor, floors.Count - 1);
+            if (terminalPauseSourceBeats > TimelineMerger.BeatEpsilon)
+            {
+                double terminalSpeed = ReadDouble(terminalFloor, "speed", 1.0);
+                double terminalBpm = baseBpm * terminalSpeed;
+                if (!(terminalBpm > MinBpm) || double.IsNaN(terminalBpm) || double.IsInfinity(terminalBpm))
+                    throw new InvalidOperationException("Track '" + slot.Name + "' has an invalid effective BPM on terminal floor " + result.TerminalFloor + ".");
+                result.TerminalPauseSeconds = terminalPauseSourceBeats * 60.0 / terminalBpm;
+            }
+
+            result.EndSeconds = cursorSeconds + result.TerminalPauseSeconds;
             return result;
         }
 
@@ -230,15 +292,27 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 AnalyzedTrack track = tracks[t];
                 track.StartBeat = track.StartSeconds * masterBpm / 60.0;
                 track.EndBeat = track.EndSeconds * masterBpm / 60.0;
+                track.TerminalPauseBeats = track.TerminalPauseSeconds * masterBpm / 60.0;
                 for (int s = 0; s < track.Segments.Count; s++)
                 {
                     TrackSegment segment = track.Segments[s];
                     segment.StartBeat = segment.StartSeconds * masterBpm / 60.0;
                     segment.EndBeat = segment.EndSeconds * masterBpm / 60.0;
                     segment.DurationBeats = segment.DurationSeconds * masterBpm / 60.0;
+                    segment.PauseDurationBeats = segment.PauseSeconds * masterBpm / 60.0;
+                    segment.MotionDurationBeats = segment.MotionDurationSeconds * masterBpm / 60.0;
                 }
             }
             return masterBpm;
+        }
+
+        private static int CountInstantVisualSegments(IList<AnalyzedTrack> tracks)
+        {
+            int count = 0;
+            for (int t = 0; t < tracks.Count; t++)
+                for (int s = 0; s < tracks[t].Segments.Count; s++)
+                    if (tracks[t].Segments[s].UseInstantVisualSnap) count++;
+            return count;
         }
 
         private static void ValidateCommonRegionStartAndPrefix(IList<TrackSlot> tracks)
@@ -338,13 +412,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 int floorId = ReadFloorId(floor, i);
                 int numPlanets = ReadInt(floor, "numPlanets", 2);
                 if (numPlanets != 2)
-                    throw new InvalidOperationException("Track '" + trackName + "' uses MultiPlanet at/near floor " + floorId + "; v1 source groups must stay two-planet.");
-                if (Math.Abs(ReadDouble(floor, "extraBeats", 0.0)) > TimelineMerger.BeatEpsilon)
-                    throw new InvalidOperationException("Track '" + trackName + "' uses Pause/extraBeats at/near floor " + floorId + "; v1 does not merge Pause.");
+                    throw new InvalidOperationException("Track '" + trackName + "' uses MultiPlanet at/near floor " + floorId + "; Multi Tile groups currently require two planets.");
                 if (ReadBool(floor, "freeroam", false))
-                    throw new InvalidOperationException("Track '" + trackName + "' uses FreeRoam at/near floor " + floorId + "; v1 does not support it.");
+                    throw new InvalidOperationException("Track '" + trackName + "' uses FreeRoam at/near floor " + floorId + "; FreeRoam is not supported yet.");
                 if (ReadInt(floor, "holdLength", -1) >= 0)
-                    throw new InvalidOperationException("Track '" + trackName + "' uses Hold at/near floor " + floorId + "; v1 does not support it.");
+                    throw new InvalidOperationException("Track '" + trackName + "' uses Hold at/near floor " + floorId + "; Hold is not supported yet.");
             }
         }
 

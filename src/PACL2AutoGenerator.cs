@@ -40,13 +40,18 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 OrbitCommitResult result = OrbitEmitter.GenerateAndCommit(
                     editor, plan, preview, tracks, baseTrackIndex);
 
+                SourceEventTransferResult eventResult = SourceEventTransfer.ApplyAndCommit(editor, tracks, plan);
+                string terminalPauseResult = TerminalPauseEmitter.Apply(editor.levelData, plan);
+                string fastVisualResult = FastVisualSnapEmitter.ApplyAndCommit(editor, tracks, plan);
+
                 editor.ApplyEventsToFloors();
                 editor.UpdateDecorationObjects();
 
                 result.Diagnostic += " Auto setup at F" + plan.RegionStartFloor + " created " + createdPlanets
                     + " planet decoration(s)"
                     + (createdOrbitTemplate ? " and an internal Orbit template" : "")
-                    + "; generated event properties were typed by ADOFAI.EditorToolkit metadata conversion.";
+                    + "; generated event properties were typed by ADOFAI.EditorToolkit metadata conversion. "
+                    + eventResult.Diagnostic + " " + terminalPauseResult + " " + fastVisualResult;
 
                 success = true;
                 return result;
@@ -148,6 +153,15 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (actions == null)
                 throw new InvalidOperationException("LevelData.levelEvents is not list-compatible in this game build.");
 
+            TrackSegment templateSegment = FindFirstOrbitSegment(plan);
+            if (templateSegment == null)
+            {
+                // Every visual segment is in ultra-fast snap mode. OrbitEmitter will
+                // remove any stale generated Orbit actions and FastVisualSnapEmitter
+                // will emit deterministic endpoint placement instead, so no template is needed.
+                return false;
+            }
+
             for (int i = 0; i < actions.Count; i++)
             {
                 LevelEvent ev = actions[i] as LevelEvent;
@@ -155,22 +169,37 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     return false;
             }
 
-            if (plan.Tracks.Count == 0 || plan.Tracks[0].Segments.Count == 0)
-                throw new InvalidOperationException("The analyzed plan has no segment available for an Orbit template.");
-
-            TrackSegment segment = plan.Tracks[0].Segments[0];
+            double motionDuration = templateSegment.MotionDurationBeats > TimelineMerger.BeatEpsilon
+                ? templateSegment.MotionDurationBeats
+                : templateSegment.DurationBeats;
             EditorToolkitBridge.EventsFor(levelData)
                 .Create("OrbitDecoration", plan.RegionStartFloor, EventCollection.Actions)
-                .Set("duration", segment.DurationBeats)
-                .Set("tag", segment.MovingTag)
-                .Set("centerTag", segment.CenterTag)
-                .Set("amount", segment.AmountDegrees)
+                .Set("duration", motionDuration)
+                .Set("tag", templateSegment.MovingTag)
+                .Set("centerTag", templateSegment.CenterTag)
+                .Set("amount", templateSegment.AmountDegrees)
                 .Set("lockRotation", false)
                 .Set("dstRadiusMultiplier", 1.0)
                 .Set("ease", "Linear")
-                .Set("angleOffset", 0.0)
+                .Set("angleOffset", Math.Max(0.0, templateSegment.PauseDurationBeats) * 180.0)
                 .Set("eventTag", "");
             return true;
+        }
+
+        private static TrackSegment FindFirstOrbitSegment(GenerationPlan plan)
+        {
+            if (plan == null) return null;
+            for (int t = 0; t < plan.Tracks.Count; t++)
+            {
+                AnalyzedTrack track = plan.Tracks[t];
+                if (track == null) continue;
+                for (int s = 0; s < track.Segments.Count; s++)
+                {
+                    TrackSegment segment = track.Segments[s];
+                    if (segment != null && !segment.UseInstantVisualSnap) return segment;
+                }
+            }
+            return null;
         }
 
         private static bool IsConfiguredOrbitPair(LevelEvent ev, GenerationPlan plan)

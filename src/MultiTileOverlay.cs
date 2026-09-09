@@ -1,40 +1,89 @@
+using KineticNapier.ADOFAIWorkbench;
 using UnityEngine;
 
 namespace KineticNapier.ADOFAIMultiTileEditor
 {
     internal sealed class MultiTileOverlay : MonoBehaviour
     {
-        private const int WindowId = 0x4D5445;
-        private static readonly Rect DefaultRect = new Rect(24f, 80f, 760f, 540f);
+        private bool visible = true;
+        private bool editorWasAvailable;
 
-        private Rect windowRect = DefaultRect;
-        internal bool Visible = true;
+        internal bool Visible
+        {
+            get { return visible; }
+            set
+            {
+                visible = value;
+                if (visible && enabled)
+                {
+                    WorkbenchIntegration.EnsureRegistered();
+                    GeneratedLayoutPaneRegistration.EnsureRegistered();
+                }
+                else
+                {
+                    WorkbenchIntegration.Unregister();
+                    GeneratedLayoutPaneRegistration.Unregister();
+                    DynamicPagingPaneRegistration.Unregister();
+                }
+            }
+        }
 
         internal void ResetPosition()
         {
-            windowRect = DefaultRect;
+            // External Workbench window owns its own OS-level position.
         }
 
-        private void OnGUI()
+        private void OnEnable()
         {
-            if (!Visible || !Main.OverlayCanDraw) return;
+            if (!visible) return;
+            WorkbenchIntegration.EnsureRegistered();
+            GeneratedLayoutPaneRegistration.EnsureRegistered();
 
-            windowRect = GUI.Window(
-                WindowId,
-                windowRect,
-                DrawWindow,
-                "ADOFAI Multi Tile Editor v" + Main.ModVersion);
-
-            float maxX = Mathf.Max(0f, Screen.width - windowRect.width);
-            float maxY = Mathf.Max(0f, Screen.height - 28f);
-            windowRect.x = Mathf.Clamp(windowRect.x, 0f, maxX);
-            windowRect.y = Mathf.Clamp(windowRect.y, 0f, maxY);
+            // 0.17.1 safety rollback: keep the paging implementation and persisted
+            // settings for later recovery/testing, but do not expose or execute it until
+            // its output mutation path has been validated against real charts.
+            DynamicPagingPaneRegistration.Unregister();
         }
 
-        private void DrawWindow(int id)
+        private void OnDisable()
         {
-            Main.DrawOverlayContents();
-            GUI.DragWindow(new Rect(0f, 0f, windowRect.width - 8f, 24f));
+            Main.FlushWorkspaceAutosave();
+            WorkbenchIntegration.Unregister();
+            GeneratedLayoutPaneRegistration.Unregister();
+            DynamicPagingPaneRegistration.Unregister();
+            editorWasAvailable = false;
+        }
+
+        private void OnApplicationQuit()
+        {
+            Main.FlushWorkspaceAutosave();
+        }
+
+        private void Update()
+        {
+            if (!visible)
+            {
+                WorkbenchIntegration.Unregister();
+                GeneratedLayoutPaneRegistration.Unregister();
+                DynamicPagingPaneRegistration.Unregister();
+                editorWasAvailable = false;
+                return;
+            }
+
+            WorkbenchIntegration.EnsureRegistered();
+            GeneratedLayoutPaneRegistration.EnsureRegistered();
+            DynamicPagingPaneRegistration.Unregister();
+            WorkbenchIntegration.Tick();
+            GeneratedLayoutPaneRegistration.Tick();
+
+            bool editorAvailable = ADOBase.editor != null;
+            if (editorAvailable && !editorWasAvailable)
+            {
+                TrackStore store = TrackStore.Current;
+                if (store == null || store.Tracks.Count == 0)
+                    Workbench.OpenPane("mte.tracks");
+            }
+            editorWasAvailable = editorAvailable;
         }
     }
 }

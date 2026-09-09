@@ -38,7 +38,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 {
                     TrackSegment segment = track.Segments[s];
                     if (!NearlyEqual(segment.StartBeat, expectedStart))
-                        throw new InvalidOperationException("Track '" + track.Name + "' contains a timing gap near source floor " + segment.SourceFloor + ".");
+                    {
+                        double gap = segment.StartBeat - expectedStart;
+                        if (!IsTerminalPauseGap(track, gap))
+                            throw new InvalidOperationException("Track '" + track.Name + "' contains a timing gap near source floor " + segment.SourceFloor + ".");
+                    }
                     if (!(segment.EndBeat > segment.StartBeat + BeatEpsilon))
                         throw new InvalidOperationException("Track '" + track.Name + "' contains a zero/negative segment near source floor " + segment.SourceFloor + ".");
                     expectedStart = segment.EndBeat;
@@ -50,7 +54,11 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 track.SourceFloors.Add(new SourceFloorPoint { Floor = last.SourceFloor + 1, Beat = last.EndBeat });
 
                 if (!NearlyEqual(expectedStart, track.EndBeat))
-                    throw new InvalidOperationException("Track '" + track.Name + "' did not terminate at its analyzed end beat.");
+                {
+                    double terminalGap = track.EndBeat - expectedStart;
+                    if (!IsTerminalPauseGap(track, terminalGap))
+                        throw new InvalidOperationException("Track '" + track.Name + "' did not terminate at its analyzed end beat.");
+                }
             }
 
             allTimes.Sort();
@@ -94,10 +102,18 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             plan.Diagnostic = "Plan OK: " + plan.Tracks.Count + " track(s), "
                 + CountSegments(plan.Tracks) + " segment(s), " + plan.Anchors.Count
                 + " master anchor(s), duration " + (plan.EndBeat - plan.StartBeat).ToString("0.######")
-                + " beats (tracks may end independently)"
+                + " beats (tracks may end independently; terminal Pause remains stationary without inventing a hit)"
                 + (virtualSegments > 0 ? "; added " + virtualSegments + " virtual-repeat segment(s) from one stored source cycle" : "")
                 + ".";
             return plan;
+        }
+
+        private static bool IsTerminalPauseGap(AnalyzedTrack track, double gap)
+        {
+            return track != null
+                && track.TerminalPauseBeats > BeatEpsilon
+                && gap > BeatEpsilon
+                && NearlyEqual(gap, track.TerminalPauseBeats);
         }
 
         internal static bool NearlyEqual(double a, double b)

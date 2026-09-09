@@ -28,6 +28,40 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             return result;
         }
 
+        internal static List<Vector2> CapturePositions(scnEditor editor)
+        {
+            var result = new List<Vector2>();
+            if (editor == null || editor.floors == null) return result;
+
+            for (int i = 0; i < editor.floors.Count; i++)
+            {
+                object floor = editor.floors[i];
+                Component component = floor as Component;
+                if (component != null && component.transform != null)
+                {
+                    Vector3 p = component.transform.position;
+                    result.Add(new Vector2(p.x, p.y));
+                    continue;
+                }
+
+                object value = ReadMember(floor, "position") ?? ReadMember(floor, "pos");
+                if (value is Vector2)
+                {
+                    result.Add((Vector2)value);
+                    continue;
+                }
+                if (value is Vector3)
+                {
+                    Vector3 p = (Vector3)value;
+                    result.Add(new Vector2(p.x, p.y));
+                    continue;
+                }
+
+                result.Add(new Vector2(float.NaN, float.NaN));
+            }
+            return result;
+        }
+
         internal static int TryGetSelectedFloorIndex(scnEditor editor)
         {
             if (editor == null || editor.floors == null || editor.floors.Count == 0) return -1;

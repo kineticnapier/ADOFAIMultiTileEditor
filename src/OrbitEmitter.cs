@@ -10,6 +10,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
     internal sealed class OrbitCommitResult
     {
         internal int Emitted;
+        internal int InstantVisualSnaps;
         internal int Replaced;
         internal int RemappedBaseEvents;
         internal int PositionAdjusted;
@@ -71,10 +72,14 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             }
 
             result.Diagnostic = "Generated master region from F" + plan.RegionStartFloor + " + " + result.Emitted
-                + " OrbitDecoration action(s). Replaced " + result.Replaced
+                + " OrbitDecoration action(s)"
+                + (result.InstantVisualSnaps > 0
+                    ? "; deferred " + result.InstantVisualSnaps + " ultra-fast visual segment(s) to deterministic position snaps"
+                    : "")
+                + ". Replaced " + result.Replaced
                 + " previous configured Orbit action(s); remapped " + result.RemappedBaseEvents
                 + " base action(s) inside the region; applied " + result.PositionAdjusted
-                + " position-aware orbit adjustment(s); prefix was preserved. Source snapshots were left unchanged.";
+                + " position-aware orbit adjustment(s); Pause intervals delay orbit start instead of slowing rotation; prefix was preserved. Source snapshots were left unchanged.";
             return result;
         }
 
@@ -93,8 +98,19 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             if (events == null) throw new InvalidOperationException("LevelData.levelEvents is not list-compatible in this game build.");
 
             ValidatePlanetDecorations(candidate, plan);
+            int expected = 0;
+            int instantVisuals = 0;
+            for (int i = 0; i < plan.Tracks.Count; i++)
+            {
+                for (int s = 0; s < plan.Tracks[i].Segments.Count; s++)
+                {
+                    if (plan.Tracks[i].Segments[s].UseInstantVisualSnap) instantVisuals++;
+                    else expected++;
+                }
+            }
+
             object template = FindConfiguredOrbitTemplate(events, plan);
-            if (template == null)
+            if (expected > 0 && template == null)
                 throw new InvalidOperationException("No configured PACL2 OrbitDecoration template is available after automatic setup.");
 
             int removed = 0;
@@ -148,18 +164,25 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 for (int s = 0; s < ordered.Count; s++)
                 {
                     TrackSegment segment = ordered[s];
+                    if (segment.UseInstantVisualSnap) continue;
+
                     object clone = CloneEvent(template);
                     if (clone == null) throw new InvalidOperationException("Could not clone the PACL2 OrbitDecoration template.");
 
+                    double motionDuration = segment.MotionDurationBeats > TimelineMerger.BeatEpsilon
+                        ? segment.MotionDurationBeats
+                        : segment.DurationBeats;
+                    double pauseAngleOffset = Math.Max(0.0, segment.PauseDurationBeats) * 180.0;
+
                     SetRequiredValue(clone, FloorNames, outputFloor);
-                    SetRequiredValue(clone, new[] { "duration" }, segment.DurationBeats);
+                    SetRequiredValue(clone, new[] { "duration" }, motionDuration);
                     SetRequiredValue(clone, new[] { "tag", "targetTag" }, segment.MovingTag);
                     SetRequiredValue(clone, new[] { "centerTag" }, segment.CenterTag);
                     SetRequiredValue(clone, new[] { "amount" }, segment.AmountDegrees);
                     SetRequiredValue(clone, new[] { "lockRotation" }, false);
                     SetRequiredValue(clone, new[] { "dstRadiusMultiplier" }, segment.DestinationRadiusMultiplier);
                     SetRequiredValue(clone, new[] { "ease" }, "Linear");
-                    SetRequiredValue(clone, new[] { "angleOffset" }, 0.0);
+                    SetRequiredValue(clone, new[] { "angleOffset" }, pauseAngleOffset);
                     SetRequiredValue(clone, new[] { "eventTag" }, "");
                     TrySetValue(clone, new[] { "active" }, true);
 
@@ -169,12 +192,16 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 }
             }
 
-            int expected = 0;
-            for (int i = 0; i < plan.Tracks.Count; i++) expected += plan.Tracks[i].Segments.Count;
             if (emitted != expected)
                 throw new InvalidOperationException("Orbit emission count mismatch: expected " + expected + ", built " + emitted + ".");
 
-            return new OrbitCommitResult { Emitted = emitted, Replaced = removed, RemappedBaseEvents = remapped };
+            return new OrbitCommitResult
+            {
+                Emitted = emitted,
+                InstantVisualSnaps = instantVisuals,
+                Replaced = removed,
+                RemappedBaseEvents = remapped
+            };
         }
 
         private static void ValidateBasePath(scnEditor editor, GenerationPlan plan, MasterPathPreview preview, IList<TrackSlot> tracks, int baseTrackIndex)
@@ -314,6 +341,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 || string.Equals(typeName, "MultiPlanet", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(typeName, "Pause", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(typeName, "Hold", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(typeName, "MoveTrack", StringComparison.OrdinalIgnoreCase)
                 || typeName.StartsWith("FreeRoam", StringComparison.OrdinalIgnoreCase)
                 || typeName.IndexOf("PositionTrack", StringComparison.OrdinalIgnoreCase) >= 0;
         }
@@ -337,11 +365,18 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 throw new InvalidOperationException("Orbit template clone did not retain the requested moving/center tags.");
             double amount;
             double duration;
+            double angleOffset;
             double radiusMultiplier;
+            double expectedDuration = segment.MotionDurationBeats > TimelineMerger.BeatEpsilon
+                ? segment.MotionDurationBeats
+                : segment.DurationBeats;
+            double expectedOffset = Math.Max(0.0, segment.PauseDurationBeats) * 180.0;
             if (!TryReadDouble(ev, new[] { "amount" }, out amount) || Math.Abs(amount - segment.AmountDegrees) > 0.001)
                 throw new InvalidOperationException("Orbit template clone did not retain the requested amount.");
-            if (!TryReadDouble(ev, new[] { "duration" }, out duration) || Math.Abs(duration - segment.DurationBeats) > 1.0e-6)
-                throw new InvalidOperationException("Orbit template clone did not retain the requested duration.");
+            if (!TryReadDouble(ev, new[] { "duration" }, out duration) || Math.Abs(duration - expectedDuration) > 1.0e-6)
+                throw new InvalidOperationException("Orbit template clone did not retain the requested motion duration.");
+            if (!TryReadDouble(ev, new[] { "angleOffset" }, out angleOffset) || Math.Abs(angleOffset - expectedOffset) > 1.0e-6)
+                throw new InvalidOperationException("Orbit template clone did not retain the requested Pause delay.");
             if (!TryReadDouble(ev, new[] { "dstRadiusMultiplier" }, out radiusMultiplier)
                 || Math.Abs(radiusMultiplier - segment.DestinationRadiusMultiplier) > 1.0e-6)
                 throw new InvalidOperationException("Orbit template clone did not retain the requested destination radius multiplier.");
