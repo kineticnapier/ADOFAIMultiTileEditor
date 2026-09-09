@@ -338,7 +338,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
             {
                 activeIndex = -1;
                 TrackSlot.ReplaceRegistration(tracks);
-                WorkspacePersistence.DeletePrimaryWithHistory(editor);
+                WorkspaceDeletion.ArchiveAndDelete(editor);
                 ChartSessionGuard.AcceptCurrent(editor);
                 return;
             }
