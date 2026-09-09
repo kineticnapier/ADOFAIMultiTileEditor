@@ -12,17 +12,27 @@ namespace KineticNapier.ADOFAIMultiTileEditor
     // tweens can be interrupted before DOTween/PACL2 writes their exact endpoint.
     // Once that happens the next orbit starts from the stale transform and the angular
     // error accumulates. For segments selected by TrackAnalyzer's high-speed guard,
-    // OrbitEmitter omits the unstable tween and this pass places the moving planet at
-    // the mathematically exact endpoint at the hit boundary.
+    // OrbitEmitter omits the unstable tween and this pass performs a deterministic
+    // zero-duration move at the hit boundary instead.
     //
-    // The positionOffset is absolute relative to the AddObject planet's original
-    // position (the same model used by the older merge_adofai_visual_v6 prototype).
+    // IMPORTANT: MoveDecorations defaults to a tile-relative origin in ADOFAI. Using
+    // an absolute-looking positionOffset without explicitly selecting LastPosition can
+    // therefore add the master tile's world position to one planet and create a huge
+    // bogus orbit radius. Snap moves here are deliberately relative deltas from the
+    // previous ideal planet position and always use relativeTo=LastPosition.
+    //
+    // Source path coordinates are also rotated into the generated planet frame. MTE's
+    // auto-created pair always starts with the non-pivot planet one unit to the LEFT of
+    // the pivot, regardless of the source chart's incoming heading. Without this frame
+    // conversion an instant snap can place the two planets farther than one tile apart.
     // CompactLayoutPostProcessor runs after this pass, so PositionTrack/layout/repeat
-    // teleports are still applied on top of the natural endpoint in the correct order.
+    // teleports remain additive on top of these canonical relative moves.
     internal static class FastVisualSnapEmitter
     {
         private const string EventTag = "adofaiMTEFastVisualSnap";
         private const float PositionEpsilon = 0.00001f;
+        private const float RadiusTolerance = 0.001f;
+        private const float MaxChordDelta = 2.001f;
 
         private sealed class SourceGeometry
         {
@@ -72,15 +82,28 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     if (targetIndex < 0 || targetIndex >= geometry.Natural.Count)
                         throw new InvalidOperationException("Ultra-fast visual endpoint is outside source geometry for track '" + track.Name + "'.");
 
-                    Vector2 basePosition;
-                    if (string.Equals(segment.MovingTag, track.PlanetATag, StringComparison.Ordinal))
-                        basePosition = geometry.InitialA;
-                    else if (string.Equals(segment.MovingTag, track.PlanetBTag, StringComparison.Ordinal))
-                        basePosition = geometry.InitialB;
+                    Vector2 previousPosition;
+                    if (sourceSegment == 0)
+                    {
+                        if (string.Equals(segment.MovingTag, track.PlanetATag, StringComparison.Ordinal))
+                            previousPosition = geometry.InitialA;
+                        else if (string.Equals(segment.MovingTag, track.PlanetBTag, StringComparison.Ordinal))
+                            previousPosition = geometry.InitialB;
+                        else
+                            throw new InvalidOperationException("Ultra-fast visual segment has an unknown moving planet tag on track '" + track.Name + "'.");
+                    }
                     else
-                        throw new InvalidOperationException("Ultra-fast visual segment has an unknown moving planet tag on track '" + track.Name + "'.");
+                    {
+                        // At the start of source segment s, the planet that is about to
+                        // move occupies source floor s-1 while the center is on floor s.
+                        previousPosition = geometry.Natural[sourceSegment - 1];
+                    }
 
-                    Vector2 offset = geometry.Natural[targetIndex] - basePosition;
+                    Vector2 centerPosition = geometry.Natural[sourceSegment];
+                    Vector2 targetPosition = geometry.Natural[targetIndex];
+                    ValidateSnapGeometry(track.Name, sourceSegment, previousPosition, centerPosition, targetPosition);
+
+                    Vector2 delta = targetPosition - previousPosition;
                     int anchor = TimelineMerger.FindAnchorIndex(plan.Anchors, segment.EndBeat);
                     if (anchor < 0)
                         throw new InvalidOperationException("Ultra-fast visual endpoint could not be mapped to the master timeline for track '" + track.Name + "'.");
@@ -88,7 +111,8 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                     LevelEvent move = CreateEvent("MoveDecorations", plan.RegionStartFloor + anchor);
                     SetRequiredData(move, "duration", 0f);
                     SetRequiredData(move, "tag", segment.MovingTag);
-                    SetRequiredData(move, "positionOffset", offset);
+                    SetRequiredData(move, "relativeTo", "LastPosition");
+                    SetRequiredData(move, "positionOffset", delta);
                     SetOptionalData(move, "angleOffset", 0f);
                     SetOptionalData(move, "ease", "Linear");
                     SetOptionalData(move, "eventTag", EventTag);
@@ -119,7 +143,7 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 }
             }
 
-            return "Fast visual guard: " + emitted + " exact endpoint snap(s)"
+            return "Fast visual guard: " + emitted + " LastPosition endpoint snap(s), canonical radius validated"
                 + (removed > 0 ? "; replaced " + removed + " previous snap event(s)." : ".");
         }
 
@@ -191,21 +215,37 @@ namespace KineticNapier.ADOFAIMultiTileEditor
 
             float tileSize = ResolveTileSize();
             Vector2 start = ToLevelPosition(floors[regionIndex], tileSize);
-            Vector2 incoming;
-            if (regionIndex > 0)
-                incoming = ToLevelPosition(floors[regionIndex - 1], tileSize) - start;
-            else
-                incoming = ToLevelPosition(floors[regionIndex + 1], tileSize) - start;
 
             var geometry = new SourceGeometry
             {
                 TrackIndex = trackIndex,
                 SourceCycleSegments = n,
-                InitialA = analyzed.InitialPivotIsA ? Vector2.zero : incoming,
-                InitialB = analyzed.InitialPivotIsA ? incoming : Vector2.zero
+                // Auto-generated MTE planets always begin one unit to the left of
+                // the pivot. These are generated-frame coordinates, not source-frame
+                // coordinates.
+                InitialA = analyzed.InitialPivotIsA ? Vector2.zero : Vector2.left,
+                InitialB = analyzed.InitialPivotIsA ? Vector2.left : Vector2.zero
             };
 
             BuildNaturalPositions(floors, regionIndex, geometry.Natural);
+
+            Vector2 incoming;
+            if (regionIndex > 0)
+            {
+                incoming = ToLevelPosition(floors[regionIndex - 1], tileSize) - start;
+            }
+            else
+            {
+                // F0 has no previous runtime floor. Reconstruct the incoming radius
+                // vector from the first outgoing vector and the first signed orbit.
+                if (geometry.Natural.Count < 2 || analyzed.Segments.Count == 0)
+                    throw new InvalidOperationException("Track '" + slot.Name + "' has no first segment for fast-visual frame reconstruction.");
+                Vector2 outgoing = geometry.Natural[1] - geometry.Natural[0];
+                incoming = RotateDegrees(outgoing, (float)-analyzed.Segments[0].AmountDegrees);
+            }
+
+            AlignNaturalToGeneratedFrame(geometry.Natural, incoming, slot.Name);
+            ValidateNaturalPath(geometry.Natural, slot.Name);
             return geometry;
         }
 
@@ -226,6 +266,93 @@ namespace KineticNapier.ADOFAIMultiTileEditor
                 else step.Normalize();
                 destination.Add(destination[destination.Count - 1] + step);
             }
+        }
+
+        private static void AlignNaturalToGeneratedFrame(
+            IList<Vector2> natural,
+            Vector2 incoming,
+            string trackName)
+        {
+            if (!IsFinite(incoming) || incoming.sqrMagnitude <= PositionEpsilon * PositionEpsilon)
+                throw new InvalidOperationException("Track '" + trackName + "' has an invalid incoming direction for fast-visual frame alignment.");
+
+            Vector2 source = incoming.normalized;
+            Vector2 target = Vector2.left;
+            float cos = Vector2.Dot(source, target);
+            float sin = source.x * target.y - source.y * target.x;
+
+            for (int i = 0; i < natural.Count; i++)
+            {
+                Vector2 v = natural[i];
+                natural[i] = new Vector2(
+                    v.x * cos - v.y * sin,
+                    v.x * sin + v.y * cos);
+            }
+        }
+
+        private static void ValidateNaturalPath(IList<Vector2> natural, string trackName)
+        {
+            if (natural == null || natural.Count < 2)
+                throw new InvalidOperationException("Track '" + trackName + "' has no natural path for fast-visual validation.");
+
+            for (int i = 1; i < natural.Count; i++)
+            {
+                Vector2 step = natural[i] - natural[i - 1];
+                if (!IsFinite(step))
+                    throw new InvalidOperationException("Track '" + trackName + "' produced a non-finite fast-visual path step.");
+                float radius = step.magnitude;
+                if (Mathf.Abs(radius - 1f) > RadiusTolerance)
+                    throw new InvalidOperationException(
+                        "Track '" + trackName + "' fast-visual path step " + (i - 1)
+                        + " has radius " + radius.ToString("0.######", CultureInfo.InvariantCulture)
+                        + " instead of 1. Generation was stopped before emitting a bad planet move.");
+            }
+        }
+
+        private static void ValidateSnapGeometry(
+            string trackName,
+            int sourceSegment,
+            Vector2 previous,
+            Vector2 center,
+            Vector2 target)
+        {
+            if (!IsFinite(previous) || !IsFinite(center) || !IsFinite(target))
+                throw new InvalidOperationException("Track '" + trackName + "' has non-finite fast-visual snap coordinates.");
+
+            float destinationRadius = (target - center).magnitude;
+            if (Mathf.Abs(destinationRadius - 1f) > RadiusTolerance)
+            {
+                throw new InvalidOperationException(
+                    "Track '" + trackName + "' fast-visual segment " + sourceSegment
+                    + " would end with planet radius " + destinationRadius.ToString("0.######", CultureInfo.InvariantCulture)
+                    + " instead of 1. Generation was stopped before the planet could leave the play area.");
+            }
+
+            Vector2 delta = target - previous;
+            float chord = delta.magnitude;
+            if (!IsFinite(delta) || chord > MaxChordDelta)
+            {
+                throw new InvalidOperationException(
+                    "Track '" + trackName + "' fast-visual segment " + sourceSegment
+                    + " requested an impossible LastPosition delta of " + chord.ToString("0.######", CultureInfo.InvariantCulture)
+                    + " tiles. Generation was stopped before emitting the move.");
+            }
+        }
+
+        private static bool IsFinite(Vector2 value)
+        {
+            return !float.IsNaN(value.x) && !float.IsInfinity(value.x)
+                && !float.IsNaN(value.y) && !float.IsInfinity(value.y);
+        }
+
+        private static Vector2 RotateDegrees(Vector2 value, float degrees)
+        {
+            float radians = degrees * Mathf.Deg2Rad;
+            float cos = Mathf.Cos(radians);
+            float sin = Mathf.Sin(radians);
+            return new Vector2(
+                value.x * cos - value.y * sin,
+                value.x * sin + value.y * cos);
         }
 
         private static int RemoveOwned(IList actions)
